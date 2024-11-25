@@ -17,8 +17,8 @@ Real-Time Lidar and Camera Rendering with 3D Gaussian Splatting for Autonomous D
 
 <div align="center">
 <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/_static/imgs/frontfig.png" />
-    <img alt="tyro logo" src="docs/_static/imgs/frontfig.png" width="80%"/>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/_static/imgs/frontfig-stacked.jpg" />
+    <img alt="tyro logo" src="docs/_static/imgs/frontfig-stacked.jpg" width="80%"/>
 </picture>
 </div>
 
