@@ -2,7 +2,7 @@
     <!-- project badges -->
     <a href="https://research.zenseact.com/publications/splatad/"><img src="https://img.shields.io/badge/Project-Page-ffa"/></a>
     <!-- paper badges -->
-    <a href="https://arxiv.org/abs/XXXX">
+    <a href="https://arxiv.org/abs/2411.16816">
         <img src='https://img.shields.io/badge/arXiv-Page-aff'>
     </a>
 </p>
@@ -32,7 +32,7 @@ Real-Time Lidar and Camera Rendering with 3D Gaussian Splatting for Autonomous D
 # About
 <h4>Code to be released.</h4>
 
-This is the official repository for [_SplatAD: Real-Time Lidar and Camera Rendering with 3D Gaussian Splatting for Autonomous Driving_](https://arxiv.org/abs/XXXX). The code in this repository builds upon the open-source library [gsplat](https://github.com/nerfstudio-project/gsplat), with modifications and extensions designed for autonomous driving data.
+This is the official repository for [_SplatAD: Real-Time Lidar and Camera Rendering with 3D Gaussian Splatting for Autonomous Driving_](https://arxiv.org/abs/2411.16816). The code in this repository builds upon the open-source library [gsplat](https://github.com/nerfstudio-project/gsplat), with modifications and extensions designed for autonomous driving data.
 
 
 # Key Features
