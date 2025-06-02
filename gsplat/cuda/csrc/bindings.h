@@ -260,7 +260,7 @@ torch::Tensor points_mapping_offset_encode_tensor(const torch::Tensor &point_ids
                                          const uint32_t C, const uint32_t tile_width,
                                          const uint32_t tile_height);
 
-std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> rasterize_to_pixels_fwd_tensor(
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor> rasterize_to_pixels_fwd_tensor(
     // Gaussian parameters
     const torch::Tensor &means2d,                   // [C, N, 2]
     const torch::Tensor &conics,                    // [C, N, 3]

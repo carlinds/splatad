@@ -1376,6 +1376,7 @@ __global__ void rasterize_to_pixels_fwd_kernel(
     const int32_t *__restrict__ flatten_ids,  // [n_isects]
     float *__restrict__ render_colors,        // [C, image_height, image_width, COLOR_DIM]
     float *__restrict__ render_alphas,        // [C, image_height, image_width, 1]
+    float *__restrict__ render_medians,       // [C, image_height, image_width, COLOR_DIM]
     int32_t *__restrict__ last_ids            // [C, image_height, image_width]
 ) {
     // each thread draws one pixel, but also timeshares caching gaussians in a
@@ -1388,9 +1389,11 @@ __global__ void rasterize_to_pixels_fwd_kernel(
     uint32_t j = block.group_index().z * tile_size + block.thread_index().x;
 
     tile_offsets += camera_id * tile_height * tile_width;
-    render_colors += camera_id * image_height * image_width * COLOR_DIM;
-    render_alphas += camera_id * image_height * image_width;
-    last_ids += camera_id * image_height * image_width;
+    const int32_t camera_offset = camera_id * image_height * image_width;
+    render_colors += camera_offset * COLOR_DIM;
+    render_alphas += camera_offset;
+    render_medians += camera_offset * COLOR_DIM;
+    last_ids += camera_offset;
     if (backgrounds != nullptr) {
         backgrounds += camera_id * COLOR_DIM;
     }
@@ -1494,6 +1497,14 @@ __global__ void rasterize_to_pixels_fwd_kernel(
             for (uint32_t k = 0; k < COLOR_DIM; ++k) {
                 pix_out[k] += c_ptr[k] * vis;
             }
+
+            if (T > 0.5 && next_T <= 0.5) {
+                PRAGMA_UNROLL
+                for (uint32_t k = 0; k < COLOR_DIM; ++k) {
+                    render_medians[pix_id * COLOR_DIM + k] = c_ptr[k];
+                }
+            }
+
             cur_idx = batch_start + t;
 
             T = next_T;
@@ -1517,7 +1528,7 @@ __global__ void rasterize_to_pixels_fwd_kernel(
     }
 }
 
-std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> rasterize_to_pixels_fwd_tensor(
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor> rasterize_to_pixels_fwd_tensor(
     // Gaussian parameters
     const torch::Tensor &means2d,                   // [C, N, 2] or [nnz, 2]
     const torch::Tensor &conics,                    // [C, N, 3] or [nnz, 3]
@@ -1564,6 +1575,8 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> rasterize_to_pixels_fwd_
                                          means2d.options().dtype(torch::kFloat32));
     torch::Tensor alphas = torch::empty({C, image_height, image_width, 1},
                                         means2d.options().dtype(torch::kFloat32));
+    torch::Tensor render_medians = torch::empty({C, image_height, image_width, channels},
+                                         means2d.options().dtype(torch::kFloat32));
     torch::Tensor last_ids = torch::empty({C, image_height, image_width},
                                           means2d.options().dtype(torch::kInt32));
 
@@ -1596,6 +1609,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> rasterize_to_pixels_fwd_
             flatten_ids.data_ptr<int32_t>(),
             renders.data_ptr<float>(),
             alphas.data_ptr<float>(),
+            render_medians.data_ptr<float>(),
             last_ids.data_ptr<int32_t>());
         break;
     case 2:
@@ -1619,6 +1633,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> rasterize_to_pixels_fwd_
             flatten_ids.data_ptr<int32_t>(),
             renders.data_ptr<float>(),
             alphas.data_ptr<float>(),
+            render_medians.data_ptr<float>(),
             last_ids.data_ptr<int32_t>());
         break;
     case 3:
@@ -1642,6 +1657,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> rasterize_to_pixels_fwd_
             flatten_ids.data_ptr<int32_t>(),
             renders.data_ptr<float>(),
             alphas.data_ptr<float>(),
+            render_medians.data_ptr<float>(),
             last_ids.data_ptr<int32_t>());
         break;
     case 4:
@@ -1665,6 +1681,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> rasterize_to_pixels_fwd_
             flatten_ids.data_ptr<int32_t>(),
             renders.data_ptr<float>(),
             alphas.data_ptr<float>(),
+            render_medians.data_ptr<float>(),
             last_ids.data_ptr<int32_t>());
         break;
     case 5:
@@ -1688,6 +1705,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> rasterize_to_pixels_fwd_
             flatten_ids.data_ptr<int32_t>(),
             renders.data_ptr<float>(),
             alphas.data_ptr<float>(),
+            render_medians.data_ptr<float>(),
             last_ids.data_ptr<int32_t>());
         break;
     case 8:
@@ -1711,6 +1729,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> rasterize_to_pixels_fwd_
             flatten_ids.data_ptr<int32_t>(),
             renders.data_ptr<float>(),
             alphas.data_ptr<float>(),
+            render_medians.data_ptr<float>(),
             last_ids.data_ptr<int32_t>());
         break;
     case 9:
@@ -1734,6 +1753,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> rasterize_to_pixels_fwd_
             flatten_ids.data_ptr<int32_t>(),
             renders.data_ptr<float>(),
             alphas.data_ptr<float>(),
+            render_medians.data_ptr<float>(),
             last_ids.data_ptr<int32_t>());
         break;
     case 16:
@@ -1757,6 +1777,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> rasterize_to_pixels_fwd_
             flatten_ids.data_ptr<int32_t>(),
             renders.data_ptr<float>(),
             alphas.data_ptr<float>(),
+            render_medians.data_ptr<float>(),
             last_ids.data_ptr<int32_t>());
         break;
     case 17:
@@ -1780,6 +1801,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> rasterize_to_pixels_fwd_
             flatten_ids.data_ptr<int32_t>(),
             renders.data_ptr<float>(),
             alphas.data_ptr<float>(),
+            render_medians.data_ptr<float>(),
             last_ids.data_ptr<int32_t>());
         break;
     case 32:
@@ -1803,6 +1825,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> rasterize_to_pixels_fwd_
             flatten_ids.data_ptr<int32_t>(),
             renders.data_ptr<float>(),
             alphas.data_ptr<float>(),
+            render_medians.data_ptr<float>(),
             last_ids.data_ptr<int32_t>());
         break;
     case 33:
@@ -1826,6 +1849,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> rasterize_to_pixels_fwd_
             flatten_ids.data_ptr<int32_t>(),
             renders.data_ptr<float>(),
             alphas.data_ptr<float>(),
+            render_medians.data_ptr<float>(),
             last_ids.data_ptr<int32_t>());
         break;
     case 64:
@@ -1849,6 +1873,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> rasterize_to_pixels_fwd_
             flatten_ids.data_ptr<int32_t>(),
             renders.data_ptr<float>(),
             alphas.data_ptr<float>(),
+            render_medians.data_ptr<float>(),
             last_ids.data_ptr<int32_t>());
         break;
     case 65:
@@ -1872,6 +1897,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> rasterize_to_pixels_fwd_
             flatten_ids.data_ptr<int32_t>(),
             renders.data_ptr<float>(),
             alphas.data_ptr<float>(),
+            render_medians.data_ptr<float>(),
             last_ids.data_ptr<int32_t>());
         break;
     case 128:
@@ -1895,6 +1921,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> rasterize_to_pixels_fwd_
             flatten_ids.data_ptr<int32_t>(),
             renders.data_ptr<float>(),
             alphas.data_ptr<float>(),
+            render_medians.data_ptr<float>(),
             last_ids.data_ptr<int32_t>());
         break;
     case 129:
@@ -1918,6 +1945,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> rasterize_to_pixels_fwd_
             flatten_ids.data_ptr<int32_t>(),
             renders.data_ptr<float>(),
             alphas.data_ptr<float>(),
+            render_medians.data_ptr<float>(),
             last_ids.data_ptr<int32_t>());
         break;
     case 256:
@@ -1941,6 +1969,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> rasterize_to_pixels_fwd_
             flatten_ids.data_ptr<int32_t>(),
             renders.data_ptr<float>(),
             alphas.data_ptr<float>(),
+            render_medians.data_ptr<float>(),
             last_ids.data_ptr<int32_t>());
         break;
     case 257:
@@ -1964,6 +1993,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> rasterize_to_pixels_fwd_
             flatten_ids.data_ptr<int32_t>(),
             renders.data_ptr<float>(),
             alphas.data_ptr<float>(),
+            render_medians.data_ptr<float>(),
             last_ids.data_ptr<int32_t>());
         break;
     case 512:
@@ -1987,6 +2017,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> rasterize_to_pixels_fwd_
             flatten_ids.data_ptr<int32_t>(),
             renders.data_ptr<float>(),
             alphas.data_ptr<float>(),
+            render_medians.data_ptr<float>(),
             last_ids.data_ptr<int32_t>());
         break;
     case 513:
@@ -2010,12 +2041,13 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> rasterize_to_pixels_fwd_
             flatten_ids.data_ptr<int32_t>(),
             renders.data_ptr<float>(),
             alphas.data_ptr<float>(),
+            render_medians.data_ptr<float>(),
             last_ids.data_ptr<int32_t>());
         break;
     default:
         AT_ERROR("Unsupported number of channels: ", channels);
     }
-    return std::make_tuple(renders, alphas, last_ids);
+    return std::make_tuple(renders, alphas, render_medians, last_ids);
 }
 
 template <uint32_t COLOR_DIM>
