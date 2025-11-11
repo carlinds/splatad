@@ -45,7 +45,7 @@ While the code contians all components needed to efficiently render camera and l
 Our code introduce no additional dependencies. We thus refer to the original documentation from gsplat for both [installation](https://github.com/nerfstudio-project/gsplat#installation) and [development setup](https://github.com/nerfstudio-project/gsplat/blob/main/docs/DEV.md).
 
 # Usage
-See [`rasterization`](gsplat/rendering.py#L22) and [`lidar_rasterization`]((gsplat/rendering.py#L443)) for entry points to camera and lidar rasterization.
+See [`rasterization`](gsplat/rendering.py#L22) and [`lidar_rasterization`](gsplat/rendering.py#L453) for entry points to camera and lidar rasterization.
 Additionally, we provide example notebooks under [examples](examples) that demonstrate lidar rendering and rolling shutter compensation.
 For further examples, check out the [test files](tests).
 
