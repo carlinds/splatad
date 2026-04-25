@@ -247,6 +247,9 @@ def rasterization(
         assert (sh_degree + 1) ** 2 <= colors.shape[-2], colors.shape
 
     # Project Gaussians to 2D. Directly pass in {quats, scales} is faster than precomputing covars.
+    # We forward `opacities` so the projection kernel can shrink the per-Gaussian
+    # bounding-box for low-opacity Gaussians (opacity-aware extend), which feeds
+    # directly into a tighter `radii` and ultimately reduces n_isects.
     proj_results = fully_fused_projection(
         means,
         None,  # covars,
@@ -267,6 +270,7 @@ def rasterization(
         radius_clip=radius_clip,
         sparse_grad=sparse_grad,
         calc_compensations=(rasterize_mode == "antialiased"),
+        opacities=opacities,
     )
 
     if packed:
@@ -291,7 +295,10 @@ def rasterization(
     if compensations is not None:
         opacities = opacities * compensations
 
-    # Identify intersecting tiles
+    # Identify intersecting tiles. Pass `conics` and `opacities` so the kernel
+    # can use the AccuTile/SNUGBOX path (per-row scanline ellipse intersection)
+    # instead of the loose AABB. This is the dominant peak-memory consumer for
+    # large rasterization workloads.
     tile_width = math.ceil(width / float(tile_size))
     tile_height = math.ceil(height / float(tile_size))
     tiles_per_gauss, isect_ids, flatten_ids = isect_tiles(
@@ -305,6 +312,8 @@ def rasterization(
         n_cameras=C,
         camera_ids=camera_ids,
         gaussian_ids=gaussian_ids,
+        conics=conics,
+        opacities=opacities,
     )
     isect_offsets = isect_offset_encode(isect_ids, C, tile_width, tile_height)
 
@@ -664,6 +673,8 @@ def lidar_rasterization(
     assert raster_pts.shape[-1] == 4, raster_pts.shape
 
     # Project Gaussians to 2D. Directly pass in {quats, scales} is faster than precomputing covars.
+    # Pass `opacities` so the projection kernel can shrink low-opacity Gaussians
+    # (opacity-aware extend), reducing radii and downstream isect counts.
     proj_results = fully_fused_lidar_projection(
         means,
         None,  # covars,
@@ -685,6 +696,7 @@ def lidar_rasterization(
         radius_clip=radius_clip,
         sparse_grad=sparse_grad,
         calc_compensations=(rasterize_mode == "antialiased"),
+        opacities=opacities,
     )
 
     if packed:

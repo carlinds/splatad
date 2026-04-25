@@ -609,6 +609,7 @@ fully_fused_projection_fwd_kernel(const uint32_t C, const uint32_t N,
                                   const float *__restrict__ quats,                // [N, 4] optional
                                   const float *__restrict__ scales,               // [N, 3] optional
                                   const float *__restrict__ velocities,           // [N, 3] optional
+                                  const float *__restrict__ opacities,            // [N] optional
                                   const float *__restrict__ viewmats,             // [C, 4, 4]
                                   const float *__restrict__ Ks,                   // [C, 3, 3]
                                   const int32_t image_width,
@@ -692,15 +693,29 @@ fully_fused_projection_fwd_kernel(const uint32_t C, const uint32_t N,
     }
 
 
-    // take 3 sigma as the radius (non differentiable)
-    // float b = 0.5f * (covar2d[0][0] + covar2d[1][1]);
-    // float v1 = b + sqrt(max(0.01f, b * b - det));
-    // float radius = ceil(3.f * sqrt(v1));
-    // float v2 = b - sqrt(max(0.1f, b * b - det));
-    // float radius = ceil(3.f * sqrt(max(v1, v2)));
+    // Compute the per-Gaussian extend factor (in standard deviations).
+    // When opacities is provided, we shrink the bounding box for low-opacity
+    // Gaussians to the point where the per-pixel contribution drops below
+    // ALPHA_THRESHOLD: alpha = opacity * exp(-0.5 * extend^2) <= ALPHA_THRESHOLD
+    //   => extend^2 <= 2 * log(opacity / ALPHA_THRESHOLD)
+    // Capped at GAUSSIAN_EXTEND for high-opacity Gaussians (matches the classic
+    // 3-sigma rule). Also doubles as a cull for very low-opacity Gaussians that
+    // would never paint a visible pixel anyway.
+    float extend = GAUSSIAN_EXTEND;
+    if (opacities != nullptr) {
+        float opacity = opacities[gid];
+        if (compensations != nullptr) {
+            opacity *= compensation;
+        }
+        if (opacity <= ALPHA_THRESHOLD) {
+            radii[idx * 2] = 0;
+            return;
+        }
+        extend = min(GAUSSIAN_EXTEND, sqrt(2.0f * __logf(opacity / ALPHA_THRESHOLD)));
+    }
 
-    float extent_x = 3.f * sqrt(covar2d[0][0]);
-    float extent_y = 3.f * sqrt(covar2d[1][1]);
+    float extent_x = extend * sqrt(covar2d[0][0]);
+    float extent_y = extend * sqrt(covar2d[1][1]);
 
     if (extent_x <= radius_clip && extent_y <= radius_clip) {
         radii[idx * 2] = 0;
@@ -970,6 +985,7 @@ fully_fused_projection_fwd_tensor(
     const at::optional<torch::Tensor> &quats,  // [N, 4] optional
     const at::optional<torch::Tensor> &scales, // [N, 3] optional
     const at::optional<torch::Tensor> &velocities, // [N, 3] optional
+    const at::optional<torch::Tensor> &opacities, // [N] optional, enables opacity-aware extend
     const torch::Tensor &viewmats,             // [C, 4, 4]
     const torch::Tensor &Ks,                   // [C, 3, 3]
     const uint32_t image_width,
@@ -993,6 +1009,9 @@ fully_fused_projection_fwd_tensor(
     }
     if (velocities.has_value()) {
         CHECK_INPUT(velocities.value());
+    }
+    if (opacities.has_value()) {
+        CHECK_INPUT(opacities.value());
     }
     CHECK_INPUT(viewmats);
     CHECK_INPUT(Ks);
@@ -1022,6 +1041,7 @@ fully_fused_projection_fwd_tensor(
             quats.has_value() ? quats.value().data_ptr<float>() : nullptr,
             scales.has_value() ? scales.value().data_ptr<float>() : nullptr,
             velocities.has_value() ? velocities.value().data_ptr<float>() : nullptr,
+            opacities.has_value() ? opacities.value().data_ptr<float>() : nullptr,
             viewmats.data_ptr<float>(),
             Ks.data_ptr<float>(),
             image_width,
@@ -1161,6 +1181,7 @@ __global__ void fully_fused_projection_packed_fwd_kernel(
     const float *__restrict__ quats,    // [N, 4] Optional
     const float *__restrict__ scales,   // [N, 3] Optional
     const float *__restrict__ velocities, // [N, 3] Optional
+    const float *__restrict__ opacities,  // [N] Optional
     const float *__restrict__ viewmats, // [C, 4, 4]
     const float *__restrict__ Ks,       // [C, 3, 3]
     const int32_t image_width, const int32_t image_height, 
@@ -1266,13 +1287,23 @@ __global__ void fully_fused_projection_packed_fwd_kernel(
     float extent_x;
     float extent_y;
     if (valid) {
-        // take 3 sigma as the radius (non differentiable)
-        // float b = 0.5f * (covar2d[0][0] + covar2d[1][1]);
-        // float v1 = b + sqrt(max(0.1f, b * b - det));
-        // float v2 = b - sqrt(max(0.1f, b * b - det));
-        // radius = ceil(3.f * sqrt(max(v1, v2)));
-        extent_x = 3.f * sqrt(covar2d[0][0]);
-        extent_y = 3.f * sqrt(covar2d[1][1]);
+        // Opacity-aware extend (see fully_fused_projection_fwd_kernel for the
+        // derivation). Cull immediately if alpha is below threshold so we don't
+        // produce intersections for an invisible Gaussian.
+        float extend = GAUSSIAN_EXTEND;
+        if (opacities != nullptr) {
+            float opacity = opacities[col_idx];
+            if (compensations != nullptr) {
+                opacity *= compensation;
+            }
+            if (opacity <= ALPHA_THRESHOLD) {
+                valid = false;
+            } else {
+                extend = min(GAUSSIAN_EXTEND, sqrt(2.0f * __logf(opacity / ALPHA_THRESHOLD)));
+            }
+        }
+        extent_x = extend * sqrt(covar2d[0][0]);
+        extent_y = extend * sqrt(covar2d[1][1]);
 
         if (extent_x <= radius_clip && extent_y <= radius_clip) {
             valid = false;
@@ -1360,6 +1391,7 @@ fully_fused_projection_packed_fwd_tensor(
     const at::optional<torch::Tensor> &quats,  // [N, 3]
     const at::optional<torch::Tensor> &scales, // [N, 3]
     const at::optional<torch::Tensor> &velocities, // [N, 3]
+    const at::optional<torch::Tensor> &opacities, // [N] optional, enables opacity-aware extend
     const torch::Tensor &viewmats,             // [C, 4, 4]
     const torch::Tensor &Ks,                   // [C, 3, 3]
     const uint32_t image_width, const uint32_t image_height, 
@@ -1381,6 +1413,9 @@ fully_fused_projection_packed_fwd_tensor(
     if (velocities.has_value()) {
         CHECK_INPUT(velocities.value());
     }
+    if (opacities.has_value()) {
+        CHECK_INPUT(opacities.value());
+    }
     CHECK_INPUT(viewmats);
     CHECK_INPUT(Ks);
     CHECK_INPUT(linear_velocity);
@@ -1400,6 +1435,9 @@ fully_fused_projection_packed_fwd_tensor(
     // limit on the number of blocks: [2**31 - 1, 65535, 65535]
     dim3 blocks = {blocks_per_row, nrows, 1};
 
+    const float *opacities_ptr =
+        opacities.has_value() ? opacities.value().data_ptr<float>() : nullptr;
+
     // first pass
     int32_t nnz;
     torch::Tensor block_accum;
@@ -1411,6 +1449,7 @@ fully_fused_projection_packed_fwd_tensor(
             quats.has_value() ? quats.value().data_ptr<float>() : nullptr,
             scales.has_value() ? scales.value().data_ptr<float>() : nullptr,
             velocities.has_value() ? velocities.value().data_ptr<float>() : nullptr,
+            opacities_ptr,
             viewmats.data_ptr<float>(), Ks.data_ptr<float>(), image_width, image_height,
             linear_velocity.data_ptr<float>(), angular_velocity.data_ptr<float>(),
             rolling_shutter_time.data_ptr<float>(),
@@ -1445,6 +1484,7 @@ fully_fused_projection_packed_fwd_tensor(
             quats.has_value() ? quats.value().data_ptr<float>() : nullptr,
             scales.has_value() ? scales.value().data_ptr<float>() : nullptr,
             velocities.has_value() ? velocities.value().data_ptr<float>() : nullptr,
+            opacities_ptr,
             viewmats.data_ptr<float>(), Ks.data_ptr<float>(), image_width, image_height,
             linear_velocity.data_ptr<float>(), angular_velocity.data_ptr<float>(),
             rolling_shutter_time.data_ptr<float>(),
@@ -2272,6 +2312,7 @@ fully_fused_lidar_projection_fwd_kernel(const uint32_t C, const uint32_t N,
                                   const float *__restrict__ quats,                // [N, 4] optional
                                   const float *__restrict__ scales,               // [N, 3] optional
                                   const float *__restrict__ velocities,           // [N, 3]
+                                  const float *__restrict__ opacities,            // [N] optional
                                   const float *__restrict__ viewmats,             // [C, 4, 4]
                                   const float min_elevation,
                                   const float max_elevation,
@@ -2357,14 +2398,25 @@ fully_fused_lidar_projection_fwd_kernel(const uint32_t C, const uint32_t N,
     }
 
 
-    // take 3 sigma as the radius (non differentiable)
-    // float b = 0.5f * (covar2d[0][0] + covar2d[1][1]);
-    // float v1 = b + sqrt(max(1e-6, b * b - det));
-    // float radius = 3.f * sqrt(v1);
-    // float v2 = b - sqrt(max(0.1f, b * b - det));
-    // float radius = ceil(3.f * sqrt(max(v1, v2)));
-    float extent_azimuth = 3.f * sqrt(max(0.f, covar2d[0][0]));
-    float extent_elevation = 3.f * sqrt(max(0.f, covar2d[1][1]));
+    // Compute the per-Gaussian extend factor (in standard deviations). See the
+    // matching block in fully_fused_projection_fwd_kernel for the derivation;
+    // we use the same opacity-aware shrink so the lidar isect_lidar_tiles pass
+    // also sees fewer intersections for low-opacity Gaussians.
+    float extend = GAUSSIAN_EXTEND;
+    if (opacities != nullptr) {
+        float opacity = opacities[gid];
+        if (compensations != nullptr) {
+            opacity *= compensation;
+        }
+        if (opacity <= ALPHA_THRESHOLD) {
+            radii[idx * 2] = 0.f;
+            return;
+        }
+        extend = min(GAUSSIAN_EXTEND, sqrt(2.0f * __logf(opacity / ALPHA_THRESHOLD)));
+    }
+
+    float extent_azimuth = extend * sqrt(max(0.f, covar2d[0][0]));
+    float extent_elevation = extend * sqrt(max(0.f, covar2d[1][1]));
 
     if (extent_azimuth <= radius_clip && extent_elevation <= radius_clip) {
         radii[idx * 2] = 0.f;
@@ -2635,6 +2687,7 @@ fully_fused_lidar_projection_fwd_tensor(
     const at::optional<torch::Tensor> &quats,  // [N, 4] optional
     const at::optional<torch::Tensor> &scales, // [N, 3] optional
     const at::optional<torch::Tensor> &velocities, // [N, 3] optional
+    const at::optional<torch::Tensor> &opacities, // [N] optional, enables opacity-aware extend
     const torch::Tensor &viewmats,             // [C, 4, 4]
     const float min_elevation,
     const float max_elevation,
@@ -2659,6 +2712,9 @@ fully_fused_lidar_projection_fwd_tensor(
     }
     if (velocities.has_value()) {
         CHECK_INPUT(velocities.value());
+    }
+    if (opacities.has_value()) {
+        CHECK_INPUT(opacities.value());
     }
     CHECK_INPUT(viewmats);
     CHECK_INPUT(linear_velocity);
@@ -2688,6 +2744,7 @@ fully_fused_lidar_projection_fwd_tensor(
             quats.has_value() ? quats.value().data_ptr<float>() : nullptr,
             scales.has_value() ? scales.value().data_ptr<float>() : nullptr,
             velocities.has_value() ? velocities.value().data_ptr<float>() : nullptr,
+            opacities.has_value() ? opacities.value().data_ptr<float>() : nullptr,
             viewmats.data_ptr<float>(),
             min_elevation,
             max_elevation,

@@ -6,6 +6,17 @@
 
 #define N_THREADS 256
 
+// AccuTile / opacity-aware extend constants. ALPHA_THRESHOLD is the contribution
+// at which we declare the Gaussian's footprint to end (matches the alpha cutoff
+// used downstream in the rasterizer at ~1/255). GAUSSIAN_EXTEND is the maximum
+// number of standard deviations we ever consider, which caps the extend at the
+// classic 3-sigma rule for very opaque Gaussians.
+// See https://arxiv.org/pdf/2402.00525 (StopThePop, B.2) and upstream gsplat
+// commit cdeb5c61 (PR #1500) for the derivation. We intentionally pick 3.33 to
+// match upstream so behavior is comparable.
+#define ALPHA_THRESHOLD (1.f / 255.f)
+#define GAUSSIAN_EXTEND 3.33f
+
 #define CHECK_CUDA(x) TORCH_CHECK(x.is_cuda(), #x " must be a CUDA tensor")
 #define CHECK_CONTIGUOUS(x) TORCH_CHECK(x.is_contiguous(), #x " must be contiguous")
 #define CHECK_INPUT(x)                                                                 \
@@ -127,6 +138,7 @@ fully_fused_projection_fwd_tensor(
     const at::optional<torch::Tensor> &quats,  // [N, 4] optional
     const at::optional<torch::Tensor> &scales, // [N, 3] optional
     const at::optional<torch::Tensor> &velocities, // [N, 3] 
+    const at::optional<torch::Tensor> &opacities, // [N] optional, enables opacity-aware extend
     const torch::Tensor &viewmats,             // [C, 4, 4]
     const torch::Tensor &Ks,                   // [C, 3, 3]
     const uint32_t image_width,
@@ -175,6 +187,7 @@ fully_fused_lidar_projection_fwd_tensor(
     const at::optional<torch::Tensor> &quats,  // [N, 4] optional
     const at::optional<torch::Tensor> &scales, // [N, 3] optional
     const at::optional<torch::Tensor> &velocities, // [N, 3] 
+    const at::optional<torch::Tensor> &opacities, // [N] optional, enables opacity-aware extend
     const torch::Tensor &viewmats,             // [C, 4, 4]
     const float min_elevation,
     const float max_elevation,
@@ -225,6 +238,8 @@ isect_tiles_tensor(const torch::Tensor &means2d, // [C, N, 2] or [nnz, 2]
                    const torch::Tensor &depths,  // [C, N] or [nnz]
                    const at::optional<torch::Tensor> &camera_ids,   // [nnz]
                    const at::optional<torch::Tensor> &gaussian_ids, // [nnz]
+                   const at::optional<torch::Tensor> &conics,       // [C, N, 3] or [nnz, 3]
+                   const at::optional<torch::Tensor> &opacities,    // [C, N] or [nnz]
                    const uint32_t C, const uint32_t tile_size,
                    const uint32_t tile_width, const uint32_t tile_height,
                    const bool sort, const bool double_buffer);
@@ -434,6 +449,7 @@ fully_fused_projection_packed_fwd_tensor(
     const at::optional<torch::Tensor> &quats,  // [N, 3]
     const at::optional<torch::Tensor> &scales, // [N, 3]
     const at::optional<torch::Tensor> &velocities, // [N, 3] 
+    const at::optional<torch::Tensor> &opacities, // [N] optional, enables opacity-aware extend
     const torch::Tensor &viewmats,             // [C, 4, 4]
     const torch::Tensor &Ks,                   // [C, 3, 3]
     const uint32_t image_width, const uint32_t image_height, 

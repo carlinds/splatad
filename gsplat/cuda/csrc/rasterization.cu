@@ -12,6 +12,117 @@ namespace cg = cooperative_groups;
  * Gaussian Tile Intersection
  ****************************************************************************/
 
+// =====================================================================
+// SNUGBOX + AccuTile helpers
+// Port of upstream gsplat (commit cdeb5c61, PR #1500). For each scanline of
+// tiles along the chosen sweep axis we solve the conic equation
+//   A*dx^2 + 2*B*dx*dy + C*dy^2 = t  (where t is the opacity-aware isocontour)
+// for the entry/exit coordinates on the perpendicular axis, then take the union
+// with the contributions from the perpendicular extrema. This produces a tight
+// per-row tile range instead of the loose AABB bounding box, which dramatically
+// shrinks n_isects (the dominant memory consumer in isect_tiles).
+// =====================================================================
+__device__ inline float2 accutile_ellipse_intersection(float A, float B, float C,
+                                                       float disc, float t,
+                                                       float2 p, bool isY,
+                                                       float coord) {
+    // Solves the conic A*dx^2 + 2*B*dx*dy + C*dy^2 = t for the orthogonal
+    // coordinate at a fixed line `coord` along the sweep axis.
+    float p_u = isY ? p.y : p.x;
+    float p_v = isY ? p.x : p.y;
+    float coeff = isY ? A : C;
+
+    float h = coord - p_u;
+    float sqrt_term = sqrtf(disc * h * h + t * coeff);
+
+    return {(-B * h - sqrt_term) / coeff + p_v,
+            (-B * h + sqrt_term) / coeff + p_v};
+}
+
+__device__ inline uint32_t accutile_process_tiles(
+    float A, float B, float C, float disc, float t, float2 p, float2 bbox_min,
+    float2 bbox_max, float2 bbox_argmin, float2 bbox_argmax, int2 rect_min,
+    int2 rect_max, uint32_t tile_size, uint32_t tile_width, bool isY,
+    int64_t cid_enc, uint32_t tile_n_bits, int64_t depth_id_enc,
+    uint32_t flatten_idx, int64_t *isect_ids, int32_t *flatten_ids,
+    int64_t *cur_idx) {
+    float BLOCK = (float)tile_size;
+
+    // Pick the shorter axis as the outer sweep. When isY=true we sweep over y
+    // and intersect with vertical tile edges; when false we sweep over x and
+    // intersect with horizontal tile edges. We swap the bbox metadata into a
+    // canonical "u/v = sweep/perpendicular" frame so the rest of the code is
+    // axis-agnostic.
+    if (isY) {
+        rect_min = {rect_min.y, rect_min.x};
+        rect_max = {rect_max.y, rect_max.x};
+        bbox_min = {bbox_min.y, bbox_min.x};
+        bbox_max = {bbox_max.y, bbox_max.x};
+        bbox_argmin = {bbox_argmin.y, bbox_argmin.x};
+        bbox_argmax = {bbox_argmax.y, bbox_argmax.x};
+    }
+
+    uint32_t tiles_count = 0;
+    float2 intersect_min_line, intersect_max_line;
+    float ellipse_min, ellipse_max;
+    float min_line, max_line;
+
+    intersect_max_line = {bbox_max.y, bbox_min.y};
+
+    min_line = rect_min.x * BLOCK;
+    if (bbox_min.x <= min_line) {
+        intersect_min_line =
+            accutile_ellipse_intersection(A, B, C, disc, t, p, isY, min_line);
+    } else {
+        intersect_min_line = intersect_max_line;
+    }
+
+#pragma unroll 1
+    for (int u = rect_min.x; u < rect_max.x; ++u) {
+        max_line = min_line + BLOCK;
+        if (max_line <= bbox_max.x) {
+            intersect_max_line = accutile_ellipse_intersection(A, B, C, disc, t,
+                                                               p, isY, max_line);
+        }
+
+        // If a perpendicular extremum of the ellipse falls inside this slab,
+        // expand the v-range out to the bbox (the slab tangents the ellipse).
+        if (min_line <= bbox_argmin.y && bbox_argmin.y < max_line) {
+            ellipse_min = bbox_min.y;
+        } else {
+            ellipse_min = min(intersect_min_line.x, intersect_max_line.x);
+        }
+
+        if (min_line <= bbox_argmax.y && bbox_argmax.y < max_line) {
+            ellipse_max = bbox_max.y;
+        } else {
+            ellipse_max = max(intersect_min_line.y, intersect_max_line.y);
+        }
+
+        int min_tile_v =
+            max(rect_min.y, min(rect_max.y, (int)(ellipse_min / BLOCK)));
+        int max_tile_v =
+            min(rect_max.y, max(rect_min.y, (int)(ellipse_max / BLOCK + 1)));
+
+        tiles_count += max_tile_v - min_tile_v;
+
+        if (isect_ids != nullptr) {
+#pragma unroll 1
+            for (int v = min_tile_v; v < max_tile_v; ++v) {
+                int64_t tile_id = isY ? (int64_t)(u * tile_width + v)
+                                      : (int64_t)(v * tile_width + u);
+                isect_ids[*cur_idx] = cid_enc | (tile_id << 32) | depth_id_enc;
+                flatten_ids[*cur_idx] = static_cast<int32_t>(flatten_idx);
+                ++(*cur_idx);
+            }
+        }
+
+        intersect_min_line = intersect_max_line;
+        min_line = max_line;
+    }
+    return tiles_count;
+}
+
 __global__ void isect_tiles(
     // if the data is [C, N, ...] or [nnz, ...] (packed)
     const bool packed,
@@ -25,6 +136,8 @@ __global__ void isect_tiles(
     const float2 *__restrict__ means2d,              // [C, N, 2] or [nnz, 2]
     const int32_t *__restrict__ radii,               // [C, N, 2] or [nnz, 2]
     const float *__restrict__ depths,                // [C, N] or [nnz]
+    const float *__restrict__ conics,                // [C, N, 3] or [nnz, 3] (optional)
+    const float *__restrict__ opacities,             // [C, N] or [nnz] (optional)
     const int64_t *__restrict__ cum_tiles_per_gauss, // [C, N] or [nnz]
     const uint32_t tile_size, const uint32_t tile_width, const uint32_t tile_height,
     const uint32_t tile_n_bits,
@@ -43,6 +156,111 @@ __global__ void isect_tiles(
         return;
     }
 
+    int64_t cid_enc = 0;
+    int64_t depth_id_enc = 0;
+    if (!first_pass) {
+        int64_t cid; // camera id
+        if (packed) {
+            // parallelize over nnz
+            cid = camera_ids[idx];
+        } else {
+            // parallelize over C * N
+            cid = idx / N;
+        }
+        cid_enc = cid << (32 + tile_n_bits);
+        depth_id_enc = (int64_t) * (int32_t *)&(depths[idx]);
+    }
+
+    if (conics != nullptr && opacities != nullptr) {
+        // -----------------------------------------------------------------
+        // AccuTile path: per-row scanline ellipse intersection.
+        // The radii[] AABB is already opacity-aware (set in projection.cu),
+        // so we use it as the outer rectangle bound and refine within.
+        // -----------------------------------------------------------------
+        const float A = conics[idx * 3];
+        const float B = conics[idx * 3 + 1];
+        const float C_conic = conics[idx * 3 + 2];
+
+        // disc = B^2 - A*C = -det(Sigma^{-1}) (negative for valid PSD covar)
+        const float disc = B * B - A * C_conic;
+        if (disc >= 0.0f) {
+            // Degenerate / numerically singular ellipse — treat as culled.
+            if (first_pass)
+                tiles_per_gauss[idx] = 0;
+            return;
+        }
+
+        // Opacity-aware extend^2: alpha = opacity * exp(-q/2) >= 1/255
+        //   => q <= 2*ln(opacity / ALPHA_THRESHOLD).
+        // Capped at GAUSSIAN_EXTEND^2 so very opaque Gaussians don't blow up.
+        const float opacity = opacities[idx];
+        if (opacity <= ALPHA_THRESHOLD) {
+            if (first_pass)
+                tiles_per_gauss[idx] = 0;
+            return;
+        }
+        const float t = fminf(GAUSSIAN_EXTEND * GAUSSIAN_EXTEND,
+                              2.0f * __logf(opacity / ALPHA_THRESHOLD));
+
+        // SNUGBOX: tightest axis-aligned bbox of the level-set ellipse.
+        // For Sigma = (Sigma^{-1})^{-1}, x_extent = sqrt(t) * sqrt(Sigma[0][0])
+        // = sqrt(t * C_conic / det(Sigma^{-1})) = sqrt(-t / disc * C_conic).
+        const float neg_t_over_disc = -t / disc;
+        const float x_extent = sqrtf(neg_t_over_disc * C_conic);
+        const float y_extent = sqrtf(neg_t_over_disc * A);
+
+        const float2 mean2d = means2d[idx];
+        const float2 bbox_min = {mean2d.x - x_extent, mean2d.y - y_extent};
+        const float2 bbox_max = {mean2d.x + x_extent, mean2d.y + y_extent};
+
+        // y-coord at which the ellipse attains x=mean.x ± x_extent (and the
+        // mirror for x). These are the "perpendicular" coordinates of the
+        // bbox-tangent points; the AccuTile sweep uses them to detect when a
+        // slab tangents the ellipse.
+        const float Bx_over_C = B * x_extent / C_conic;
+        const float By_over_A = B * y_extent / A;
+        const float2 bbox_argmin = {mean2d.y + Bx_over_C, mean2d.x + By_over_A};
+        const float2 bbox_argmax = {mean2d.y - Bx_over_C, mean2d.x - By_over_A};
+
+        const float tile_size_f = (float)tile_size;
+        int2 rect_min = {
+            max(0, min((int)tile_width, (int)(bbox_min.x / tile_size_f))),
+            max(0, min((int)tile_height, (int)(bbox_min.y / tile_size_f)))};
+        int2 rect_max = {
+            max(0, min((int)tile_width, (int)(bbox_max.x / tile_size_f + 1.0f))),
+            max(0, min((int)tile_height, (int)(bbox_max.y / tile_size_f + 1.0f)))};
+
+        const int y_span = rect_max.y - rect_min.y;
+        const int x_span = rect_max.x - rect_min.x;
+        if (x_span <= 0 || y_span <= 0) {
+            if (first_pass)
+                tiles_per_gauss[idx] = 0;
+            return;
+        }
+
+        // Sweep along the shorter axis to keep the inner loop as tight as
+        // possible (fewer per-line conic solves).
+        const bool isY = y_span < x_span;
+        int64_t cur_idx =
+            first_pass ? 0 : ((idx == 0) ? 0 : cum_tiles_per_gauss[idx - 1]);
+
+        const uint32_t count = accutile_process_tiles(
+            A, B, C_conic, disc, t, mean2d, bbox_min, bbox_max, bbox_argmin,
+            bbox_argmax, rect_min, rect_max, tile_size, tile_width, isY,
+            cid_enc, tile_n_bits, depth_id_enc, idx,
+            first_pass ? nullptr : isect_ids,
+            first_pass ? nullptr : flatten_ids, &cur_idx);
+
+        if (first_pass) {
+            tiles_per_gauss[idx] = static_cast<int32_t>(count);
+        }
+        return;
+    }
+
+    // -----------------------------------------------------------------
+    // AABB fallback (legacy behavior). Used when conics/opacities are
+    // not provided by the caller (e.g. external callers, lidar path).
+    // -----------------------------------------------------------------
     float tile_extent_x = radii[idx * 2] / static_cast<float>(tile_size);
     float tile_extent_y = radii[idx * 2 + 1] / static_cast<float>(tile_size);
     float tile_x = means2d[idx].x / tile_size;
@@ -62,19 +280,6 @@ __global__ void isect_tiles(
         return;
     }
 
-    int64_t cid; // camera id
-    if (packed) {
-        // parallelize over nnz
-        cid = camera_ids[idx];
-        // gid = gaussian_ids[idx];
-    } else {
-        // parallelize over C * N
-        cid = idx / N;
-        // gid = idx % N;
-    }
-    const int64_t cid_enc = cid << (32 + tile_n_bits);
-
-    int64_t depth_id_enc = (int64_t) * (int32_t *)&(depths[idx]);
     int64_t cur_idx = (idx == 0) ? 0 : cum_tiles_per_gauss[idx - 1];
     for (int32_t i = tile_min.y; i < tile_max.y; ++i) {
         for (int32_t j = tile_min.x; j < tile_max.x; ++j) {
@@ -95,6 +300,8 @@ isect_tiles_tensor(const torch::Tensor &means2d, // [C, N, 2] or [nnz, 2]
                    const torch::Tensor &depths,  // [C, N] or [nnz]
                    const at::optional<torch::Tensor> &camera_ids,   // [nnz]
                    const at::optional<torch::Tensor> &gaussian_ids, // [nnz]
+                   const at::optional<torch::Tensor> &conics,    // [C, N, 3] or [nnz, 3]
+                   const at::optional<torch::Tensor> &opacities, // [C, N] or [nnz]
                    const uint32_t C, const uint32_t tile_size,
                    const uint32_t tile_width, const uint32_t tile_height,
                    const bool sort, const bool double_buffer) {
@@ -107,6 +314,12 @@ isect_tiles_tensor(const torch::Tensor &means2d, // [C, N, 2] or [nnz, 2]
     }
     if (gaussian_ids.has_value()) {
         CHECK_INPUT(gaussian_ids.value());
+    }
+    if (conics.has_value()) {
+        CHECK_INPUT(conics.value());
+    }
+    if (opacities.has_value()) {
+        CHECK_INPUT(opacities.value());
     }
     bool packed = means2d.dim() == 2;
 
@@ -137,6 +350,11 @@ isect_tiles_tensor(const torch::Tensor &means2d, // [C, N, 2] or [nnz, 2]
     // we have enough bits for them.
     assert(tile_n_bits + cam_n_bits <= 32);
 
+    const float *conics_ptr =
+        conics.has_value() ? conics.value().data_ptr<float>() : nullptr;
+    const float *opacities_ptr =
+        opacities.has_value() ? opacities.value().data_ptr<float>() : nullptr;
+
     // first pass: compute number of tiles per gaussian
     torch::Tensor tiles_per_gauss =
         torch::empty_like(depths, depths.options().dtype(torch::kInt32));
@@ -148,8 +366,9 @@ isect_tiles_tensor(const torch::Tensor &means2d, // [C, N, 2] or [nnz, 2]
                       stream>>>(
             packed, C, N, nnz, camera_ids_ptr, gaussian_ids_ptr,
             (float2 *)means2d.data_ptr<float>(), radii.data_ptr<int32_t>(),
-            depths.data_ptr<float>(), nullptr, tile_size, tile_width, tile_height,
-            tile_n_bits, tiles_per_gauss.data_ptr<int32_t>(), nullptr, nullptr);
+            depths.data_ptr<float>(), conics_ptr, opacities_ptr, nullptr,
+            tile_size, tile_width, tile_height, tile_n_bits,
+            tiles_per_gauss.data_ptr<int32_t>(), nullptr, nullptr);
         cum_tiles_per_gauss = torch::cumsum(tiles_per_gauss.view({-1}), 0);
         n_isects = cum_tiles_per_gauss[-1].item<int64_t>();
     } else {
@@ -166,8 +385,9 @@ isect_tiles_tensor(const torch::Tensor &means2d, // [C, N, 2] or [nnz, 2]
                       stream>>>(
             packed, C, N, nnz, camera_ids_ptr, gaussian_ids_ptr,
             (float2 *)means2d.data_ptr<float>(), radii.data_ptr<int32_t>(),
-            depths.data_ptr<float>(), cum_tiles_per_gauss.data_ptr<int64_t>(),
-            tile_size, tile_width, tile_height, tile_n_bits, nullptr,
+            depths.data_ptr<float>(), conics_ptr, opacities_ptr,
+            cum_tiles_per_gauss.data_ptr<int64_t>(), tile_size, tile_width,
+            tile_height, tile_n_bits, nullptr,
             isect_ids.data_ptr<int64_t>(), flatten_ids.data_ptr<int32_t>());
     }
 

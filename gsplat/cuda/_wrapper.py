@@ -247,6 +247,7 @@ def fully_fused_projection(
     packed: bool = False,
     sparse_grad: bool = False,
     calc_compensations: bool = False,
+    opacities: Optional[Tensor] = None,  # [N]
 ) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor]:
     """Projects Gaussians to 2D.
 
@@ -339,6 +340,9 @@ def fully_fused_projection(
     if velocities is not None:
         assert velocities.size() == (N, 3), velocities.size()
         velocities = velocities.contiguous()
+    if opacities is not None:
+        assert opacities.size() == (N,), opacities.size()
+        opacities = opacities.contiguous()
     if sparse_grad:
         assert packed, "sparse_grad is only supported when packed is True"
 
@@ -364,6 +368,7 @@ def fully_fused_projection(
             radius_clip,
             sparse_grad,
             calc_compensations,
+            opacities,
         )
     else:
         return _FullyFusedProjection.apply(
@@ -384,6 +389,7 @@ def fully_fused_projection(
             far_plane,
             radius_clip,
             calc_compensations,
+            opacities,
         )
 
 
@@ -408,6 +414,7 @@ def fully_fused_lidar_projection(
     packed: bool = False,
     sparse_grad: bool = False,
     calc_compensations: bool = False,
+    opacities: Optional[Tensor] = None,  # [N]
 ) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor]:
     """Projects Gaussians to 2D.
 
@@ -501,6 +508,9 @@ def fully_fused_lidar_projection(
     if velocities is not None:
         assert velocities.size() == (N, 3), velocities.size()
         velocities = velocities.contiguous()
+    if opacities is not None:
+        assert opacities.size() == (N,), opacities.size()
+        opacities = opacities.contiguous()
     if sparse_grad:
         assert packed, "sparse_grad is only supported when packed is True"
 
@@ -527,6 +537,7 @@ def fully_fused_lidar_projection(
             far_plane,
             radius_clip,
             calc_compensations,
+            opacities,
         )
 
 @torch.no_grad()
@@ -542,6 +553,8 @@ def isect_tiles(
     n_cameras: Optional[int] = None,
     camera_ids: Optional[Tensor] = None,
     gaussian_ids: Optional[Tensor] = None,
+    conics: Optional[Tensor] = None,  # [C, N, 3] or [nnz, 3]
+    opacities: Optional[Tensor] = None,  # [C, N] or [nnz]
 ) -> Tuple[Tensor, Tensor, Tensor]:
     """Maps projected Gaussians to intersecting tiles.
 
@@ -557,6 +570,13 @@ def isect_tiles(
         n_cameras: Number of cameras. Required if packed is True.
         camera_ids: The row indices of the projected Gaussians. Required if packed is True.
         gaussian_ids: The column indices of the projected Gaussians. Required if packed is True.
+        conics: Inverse of the 2D covariance matrix (upper-triangular). When supplied
+            together with `opacities`, the kernel uses the AccuTile/SNUGBOX path which
+            performs per-row ellipse intersection instead of an axis-aligned bounding
+            box. Substantially reduces ``n_isects`` (and the peak memory of the
+            subsequent radix sort). [C, N, 3] if packed is False, [nnz, 3] if packed.
+        opacities: Per-Gaussian opacity, used together with `conics` to compute the
+            opacity-aware isocontour. [C, N] if packed is False, [nnz] if packed.
 
     Returns:
         A tuple:
@@ -580,12 +600,20 @@ def isect_tiles(
         camera_ids = camera_ids.contiguous()
         gaussian_ids = gaussian_ids.contiguous()
         C = n_cameras
+        if conics is not None:
+            assert conics.shape == (nnz, 3), conics.size()
+        if opacities is not None:
+            assert opacities.shape == (nnz,), opacities.size()
 
     else:
         C, N, _ = means2d.shape
         assert means2d.shape == (C, N, 2), means2d.size()
         assert radii.shape == (C, N, 2), radii.size()
         assert depths.shape == (C, N), depths.size()
+        if conics is not None:
+            assert conics.shape == (C, N, 3), conics.size()
+        if opacities is not None:
+            assert opacities.shape == (C, N), opacities.size()
 
     tiles_per_gauss, isect_ids, flatten_ids = _make_lazy_cuda_func("isect_tiles")(
         means2d.contiguous(),
@@ -593,6 +621,8 @@ def isect_tiles(
         depths.contiguous(),
         camera_ids,
         gaussian_ids,
+        conics.contiguous() if conics is not None else None,
+        opacities.contiguous() if opacities is not None else None,
         C,
         tile_size,
         tile_width,
@@ -1524,6 +1554,7 @@ class _FullyFusedProjection(torch.autograd.Function):
         far_plane: float,
         radius_clip: float,
         calc_compensations: bool,
+        opacities: Optional[Tensor] = None,  # [N]
     ) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor]:
         # "covars" and {"quats", "scales"} are mutually exclusive
         radii, means2d, depths, conics, compensations, pix_vels = _make_lazy_cuda_func(
@@ -1534,6 +1565,7 @@ class _FullyFusedProjection(torch.autograd.Function):
             quats,
             scales,
             velocities,
+            opacities,
             viewmats,
             Ks,
             width,
@@ -1646,6 +1678,7 @@ class _FullyFusedProjection(torch.autograd.Function):
             None,
             None,
             None,
+            None,  # opacities
         )
     
 class _FullyFusedLidarProjection(torch.autograd.Function):
@@ -1672,6 +1705,7 @@ class _FullyFusedLidarProjection(torch.autograd.Function):
         far_plane: float,
         radius_clip: float,
         calc_compensations: bool,
+        opacities: Optional[Tensor] = None,  # [N]
     ) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor]:
         # "covars" and {"quats", "scales"} are mutually exclusive
         radii, means2d, depths, conics, compensations, pix_vels, depth_compensation = _make_lazy_cuda_func(
@@ -1682,6 +1716,7 @@ class _FullyFusedLidarProjection(torch.autograd.Function):
             quats,
             scales,
             velocities,
+            opacities,
             viewmats,
             min_elevation,
             max_elevation,
@@ -1800,6 +1835,7 @@ class _FullyFusedLidarProjection(torch.autograd.Function):
             None,
             None,
             None,
+            None,  # opacities
         )
 
 class _RasterizeToPixels(torch.autograd.Function):
@@ -2146,6 +2182,7 @@ class _FullyFusedProjectionPacked(torch.autograd.Function):
         radius_clip: float,
         sparse_grad: bool,
         calc_compensations: bool,
+        opacities: Optional[Tensor] = None,  # [N]
     ) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
         (
             indptr,
@@ -2162,7 +2199,8 @@ class _FullyFusedProjectionPacked(torch.autograd.Function):
             covars,  # optional
             quats,  # optional
             scales,  # optional
-            velocities, 
+            velocities,
+            opacities,
             viewmats,
             Ks,
             width,
@@ -2334,6 +2372,7 @@ class _FullyFusedProjectionPacked(torch.autograd.Function):
             None,
             None,
             None,
+            None,  # opacities
         )
 
 class _SphericalHarmonics(torch.autograd.Function):
