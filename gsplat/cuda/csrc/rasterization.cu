@@ -8,6 +8,14 @@
 
 namespace cg = cooperative_groups;
 
+#if defined(USE_ROCM)
+// hipify rewrites <cub/cub.cuh> -> <hipcub/hipcub.hpp> but leaves the cub::
+// namespace unrenamed, so cub::DeviceRadixSort / cub::DoubleBuffer would be
+// undeclared. The SortPairs begin_bit is 0 (full-width sort), so the cudaKDTree
+// nonzero-begin_bit hipCUB bug does not apply.
+namespace cub = hipcub;
+#endif
+
 /****************************************************************************
  * Gaussian Tile Intersection
  ****************************************************************************/
@@ -1064,7 +1072,7 @@ std::tuple<torch::Tensor, torch::Tensor> rasterize_to_indices_in_range_tensor(
     at::cuda::CUDAStream stream = at::cuda::getCurrentCUDAStream();
     const uint32_t shared_mem =
         tile_size * tile_size * (sizeof(int32_t) + sizeof(float3) + sizeof(float3) + sizeof(float2));
-    if (cudaFuncSetAttribute(rasterize_to_indices_in_range_kernel,
+    if (cudaFuncSetAttribute((const void *)rasterize_to_indices_in_range_kernel,
                              cudaFuncAttributeMaxDynamicSharedMemorySize,
                              shared_mem) != cudaSuccess) {
         AT_ERROR("Failed to set maximum shared memory size (requested ", shared_mem,
@@ -1331,7 +1339,7 @@ std::tuple<torch::Tensor, torch::Tensor> rasterize_to_indices_in_range_lidar_ten
     at::cuda::CUDAStream stream = at::cuda::getCurrentCUDAStream();
     const uint32_t shared_mem =
         tile_width * tile_height * (sizeof(int32_t) + sizeof(float3) + sizeof(float3) + sizeof(float3));
-    if (cudaFuncSetAttribute(rasterize_to_indices_in_range_lidar_kernel,
+    if (cudaFuncSetAttribute((const void *)rasterize_to_indices_in_range_lidar_kernel,
                              cudaFuncAttributeMaxDynamicSharedMemorySize,
                              shared_mem) != cudaSuccess) {
         AT_ERROR("Failed to set maximum shared memory size (requested ", shared_mem,
@@ -1636,7 +1644,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor> rasterize
     // moving the channel padding from python to C side.
     switch (channels) {
     case 1:
-        if (cudaFuncSetAttribute(rasterize_to_pixels_fwd_kernel<1>,
+        if (cudaFuncSetAttribute((const void *)rasterize_to_pixels_fwd_kernel<1>,
                                  cudaFuncAttributeMaxDynamicSharedMemorySize,
                                  shared_mem) != cudaSuccess) {
             AT_ERROR("Failed to set maximum shared memory size (requested ", shared_mem,
@@ -1660,7 +1668,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor> rasterize
             last_ids.data_ptr<int32_t>());
         break;
     case 2:
-        if (cudaFuncSetAttribute(rasterize_to_pixels_fwd_kernel<2>,
+        if (cudaFuncSetAttribute((const void *)rasterize_to_pixels_fwd_kernel<2>,
                                  cudaFuncAttributeMaxDynamicSharedMemorySize,
                                  shared_mem) != cudaSuccess) {
             AT_ERROR("Failed to set maximum shared memory size (requested ", shared_mem,
@@ -1684,7 +1692,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor> rasterize
             last_ids.data_ptr<int32_t>());
         break;
     case 3:
-        if (cudaFuncSetAttribute(rasterize_to_pixels_fwd_kernel<3>,
+        if (cudaFuncSetAttribute((const void *)rasterize_to_pixels_fwd_kernel<3>,
                                  cudaFuncAttributeMaxDynamicSharedMemorySize,
                                  shared_mem) != cudaSuccess) {
             AT_ERROR("Failed to set maximum shared memory size (requested ", shared_mem,
@@ -1708,7 +1716,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor> rasterize
             last_ids.data_ptr<int32_t>());
         break;
     case 4:
-        if (cudaFuncSetAttribute(rasterize_to_pixels_fwd_kernel<4>,
+        if (cudaFuncSetAttribute((const void *)rasterize_to_pixels_fwd_kernel<4>,
                                  cudaFuncAttributeMaxDynamicSharedMemorySize,
                                  shared_mem) != cudaSuccess) {
             AT_ERROR("Failed to set maximum shared memory size (requested ", shared_mem,
@@ -1732,7 +1740,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor> rasterize
             last_ids.data_ptr<int32_t>());
         break;
     case 5:
-        if (cudaFuncSetAttribute(rasterize_to_pixels_fwd_kernel<5>,
+        if (cudaFuncSetAttribute((const void *)rasterize_to_pixels_fwd_kernel<5>,
                                  cudaFuncAttributeMaxDynamicSharedMemorySize,
                                  shared_mem) != cudaSuccess) {
             AT_ERROR("Failed to set maximum shared memory size (requested ", shared_mem,
@@ -1756,7 +1764,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor> rasterize
             last_ids.data_ptr<int32_t>());
         break;
     case 8:
-        if (cudaFuncSetAttribute(rasterize_to_pixels_fwd_kernel<8>,
+        if (cudaFuncSetAttribute((const void *)rasterize_to_pixels_fwd_kernel<8>,
                                  cudaFuncAttributeMaxDynamicSharedMemorySize,
                                  shared_mem) != cudaSuccess) {
             AT_ERROR("Failed to set maximum shared memory size (requested ", shared_mem,
@@ -1780,7 +1788,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor> rasterize
             last_ids.data_ptr<int32_t>());
         break;
     case 9:
-        if (cudaFuncSetAttribute(rasterize_to_pixels_fwd_kernel<9>,
+        if (cudaFuncSetAttribute((const void *)rasterize_to_pixels_fwd_kernel<9>,
                                  cudaFuncAttributeMaxDynamicSharedMemorySize,
                                  shared_mem) != cudaSuccess) {
             AT_ERROR("Failed to set maximum shared memory size (requested ", shared_mem,
@@ -1804,7 +1812,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor> rasterize
             last_ids.data_ptr<int32_t>());
         break;
     case 16:
-        if (cudaFuncSetAttribute(rasterize_to_pixels_fwd_kernel<16>,
+        if (cudaFuncSetAttribute((const void *)rasterize_to_pixels_fwd_kernel<16>,
                                  cudaFuncAttributeMaxDynamicSharedMemorySize,
                                  shared_mem) != cudaSuccess) {
             AT_ERROR("Failed to set maximum shared memory size (requested ", shared_mem,
@@ -1828,7 +1836,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor> rasterize
             last_ids.data_ptr<int32_t>());
         break;
     case 17:
-        if (cudaFuncSetAttribute(rasterize_to_pixels_fwd_kernel<17>,
+        if (cudaFuncSetAttribute((const void *)rasterize_to_pixels_fwd_kernel<17>,
                                  cudaFuncAttributeMaxDynamicSharedMemorySize,
                                  shared_mem) != cudaSuccess) {
             AT_ERROR("Failed to set maximum shared memory size (requested ", shared_mem,
@@ -1852,7 +1860,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor> rasterize
             last_ids.data_ptr<int32_t>());
         break;
     case 32:
-        if (cudaFuncSetAttribute(rasterize_to_pixels_fwd_kernel<32>,
+        if (cudaFuncSetAttribute((const void *)rasterize_to_pixels_fwd_kernel<32>,
                                  cudaFuncAttributeMaxDynamicSharedMemorySize,
                                  shared_mem) != cudaSuccess) {
             AT_ERROR("Failed to set maximum shared memory size (requested ", shared_mem,
@@ -1876,7 +1884,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor> rasterize
             last_ids.data_ptr<int32_t>());
         break;
     case 33:
-        if (cudaFuncSetAttribute(rasterize_to_pixels_fwd_kernel<33>,
+        if (cudaFuncSetAttribute((const void *)rasterize_to_pixels_fwd_kernel<33>,
                                  cudaFuncAttributeMaxDynamicSharedMemorySize,
                                  shared_mem) != cudaSuccess) {
             AT_ERROR("Failed to set maximum shared memory size (requested ", shared_mem,
@@ -1900,7 +1908,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor> rasterize
             last_ids.data_ptr<int32_t>());
         break;
     case 64:
-        if (cudaFuncSetAttribute(rasterize_to_pixels_fwd_kernel<64>,
+        if (cudaFuncSetAttribute((const void *)rasterize_to_pixels_fwd_kernel<64>,
                                  cudaFuncAttributeMaxDynamicSharedMemorySize,
                                  shared_mem) != cudaSuccess) {
             AT_ERROR("Failed to set maximum shared memory size (requested ", shared_mem,
@@ -1924,7 +1932,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor> rasterize
             last_ids.data_ptr<int32_t>());
         break;
     case 65:
-        if (cudaFuncSetAttribute(rasterize_to_pixels_fwd_kernel<65>,
+        if (cudaFuncSetAttribute((const void *)rasterize_to_pixels_fwd_kernel<65>,
                                  cudaFuncAttributeMaxDynamicSharedMemorySize,
                                  shared_mem) != cudaSuccess) {
             AT_ERROR("Failed to set maximum shared memory size (requested ", shared_mem,
@@ -1948,7 +1956,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor> rasterize
             last_ids.data_ptr<int32_t>());
         break;
     case 128:
-        if (cudaFuncSetAttribute(rasterize_to_pixels_fwd_kernel<128>,
+        if (cudaFuncSetAttribute((const void *)rasterize_to_pixels_fwd_kernel<128>,
                                  cudaFuncAttributeMaxDynamicSharedMemorySize,
                                  shared_mem) != cudaSuccess) {
             AT_ERROR("Failed to set maximum shared memory size (requested ", shared_mem,
@@ -1972,7 +1980,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor> rasterize
             last_ids.data_ptr<int32_t>());
         break;
     case 129:
-        if (cudaFuncSetAttribute(rasterize_to_pixels_fwd_kernel<129>,
+        if (cudaFuncSetAttribute((const void *)rasterize_to_pixels_fwd_kernel<129>,
                                  cudaFuncAttributeMaxDynamicSharedMemorySize,
                                  shared_mem) != cudaSuccess) {
             AT_ERROR("Failed to set maximum shared memory size (requested ", shared_mem,
@@ -1996,7 +2004,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor> rasterize
             last_ids.data_ptr<int32_t>());
         break;
     case 256:
-        if (cudaFuncSetAttribute(rasterize_to_pixels_fwd_kernel<256>,
+        if (cudaFuncSetAttribute((const void *)rasterize_to_pixels_fwd_kernel<256>,
                                  cudaFuncAttributeMaxDynamicSharedMemorySize,
                                  shared_mem) != cudaSuccess) {
             AT_ERROR("Failed to set maximum shared memory size (requested ", shared_mem,
@@ -2020,7 +2028,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor> rasterize
             last_ids.data_ptr<int32_t>());
         break;
     case 257:
-        if (cudaFuncSetAttribute(rasterize_to_pixels_fwd_kernel<257>,
+        if (cudaFuncSetAttribute((const void *)rasterize_to_pixels_fwd_kernel<257>,
                                  cudaFuncAttributeMaxDynamicSharedMemorySize,
                                  shared_mem) != cudaSuccess) {
             AT_ERROR("Failed to set maximum shared memory size (requested ", shared_mem,
@@ -2044,7 +2052,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor> rasterize
             last_ids.data_ptr<int32_t>());
         break;
     case 512:
-        if (cudaFuncSetAttribute(rasterize_to_pixels_fwd_kernel<512>,
+        if (cudaFuncSetAttribute((const void *)rasterize_to_pixels_fwd_kernel<512>,
                                  cudaFuncAttributeMaxDynamicSharedMemorySize,
                                  shared_mem) != cudaSuccess) {
             AT_ERROR("Failed to set maximum shared memory size (requested ", shared_mem,
@@ -2068,7 +2076,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor> rasterize
             last_ids.data_ptr<int32_t>());
         break;
     case 513:
-        if (cudaFuncSetAttribute(rasterize_to_pixels_fwd_kernel<513>,
+        if (cudaFuncSetAttribute((const void *)rasterize_to_pixels_fwd_kernel<513>,
                                  cudaFuncAttributeMaxDynamicSharedMemorySize,
                                  shared_mem) != cudaSuccess) {
             AT_ERROR("Failed to set maximum shared memory size (requested ", shared_mem,
@@ -2372,7 +2380,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
     // moving the channel padding from python to C side.
     switch (channels) {
     case 1:
-        if (cudaFuncSetAttribute(rasterize_to_points_fwd_kernel<1>,
+        if (cudaFuncSetAttribute((const void *)rasterize_to_points_fwd_kernel<1>,
                                  cudaFuncAttributeMaxDynamicSharedMemorySize,
                                  shared_mem) != cudaSuccess) {
             AT_ERROR("Failed to set maximum shared memory size (requested ", shared_mem,
@@ -2400,7 +2408,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
             last_ids.data_ptr<int32_t>(), median_depths.data_ptr<float>());
         break;
     case 2:
-        if (cudaFuncSetAttribute(rasterize_to_points_fwd_kernel<2>,
+        if (cudaFuncSetAttribute((const void *)rasterize_to_points_fwd_kernel<2>,
                                  cudaFuncAttributeMaxDynamicSharedMemorySize,
                                  shared_mem) != cudaSuccess) {
             AT_ERROR("Failed to set maximum shared memory size (requested ", shared_mem,
@@ -2428,7 +2436,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
             last_ids.data_ptr<int32_t>(), median_depths.data_ptr<float>());
         break;
     case 3:
-        if (cudaFuncSetAttribute(rasterize_to_points_fwd_kernel<3>,
+        if (cudaFuncSetAttribute((const void *)rasterize_to_points_fwd_kernel<3>,
                                  cudaFuncAttributeMaxDynamicSharedMemorySize,
                                  shared_mem) != cudaSuccess) {
             AT_ERROR("Failed to set maximum shared memory size (requested ", shared_mem,
@@ -2456,7 +2464,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
             last_ids.data_ptr<int32_t>(), median_depths.data_ptr<float>());
         break;
     case 4:
-        if (cudaFuncSetAttribute(rasterize_to_points_fwd_kernel<4>,
+        if (cudaFuncSetAttribute((const void *)rasterize_to_points_fwd_kernel<4>,
                                  cudaFuncAttributeMaxDynamicSharedMemorySize,
                                  shared_mem) != cudaSuccess) {
             AT_ERROR("Failed to set maximum shared memory size (requested ", shared_mem,
@@ -2484,7 +2492,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
             last_ids.data_ptr<int32_t>(), median_depths.data_ptr<float>());
         break;
     case 5:
-        if (cudaFuncSetAttribute(rasterize_to_points_fwd_kernel<5>,
+        if (cudaFuncSetAttribute((const void *)rasterize_to_points_fwd_kernel<5>,
                                  cudaFuncAttributeMaxDynamicSharedMemorySize,
                                  shared_mem) != cudaSuccess) {
             AT_ERROR("Failed to set maximum shared memory size (requested ", shared_mem,
@@ -2512,7 +2520,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
             last_ids.data_ptr<int32_t>(), median_depths.data_ptr<float>());
         break;
     case 8:
-        if (cudaFuncSetAttribute(rasterize_to_points_fwd_kernel<8>,
+        if (cudaFuncSetAttribute((const void *)rasterize_to_points_fwd_kernel<8>,
                                  cudaFuncAttributeMaxDynamicSharedMemorySize,
                                  shared_mem) != cudaSuccess) {
             AT_ERROR("Failed to set maximum shared memory size (requested ", shared_mem,
@@ -2540,7 +2548,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
             last_ids.data_ptr<int32_t>(), median_depths.data_ptr<float>());
         break;
     case 9:
-        if (cudaFuncSetAttribute(rasterize_to_points_fwd_kernel<9>,
+        if (cudaFuncSetAttribute((const void *)rasterize_to_points_fwd_kernel<9>,
                                  cudaFuncAttributeMaxDynamicSharedMemorySize,
                                  shared_mem) != cudaSuccess) {
             AT_ERROR("Failed to set maximum shared memory size (requested ", shared_mem,
@@ -2568,7 +2576,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
             last_ids.data_ptr<int32_t>(), median_depths.data_ptr<float>());
         break;
     case 16:
-        if (cudaFuncSetAttribute(rasterize_to_points_fwd_kernel<16>,
+        if (cudaFuncSetAttribute((const void *)rasterize_to_points_fwd_kernel<16>,
                                  cudaFuncAttributeMaxDynamicSharedMemorySize,
                                  shared_mem) != cudaSuccess) {
             AT_ERROR("Failed to set maximum shared memory size (requested ", shared_mem,
@@ -2596,7 +2604,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
             last_ids.data_ptr<int32_t>(), median_depths.data_ptr<float>());
         break;
     case 17:
-        if (cudaFuncSetAttribute(rasterize_to_points_fwd_kernel<17>,
+        if (cudaFuncSetAttribute((const void *)rasterize_to_points_fwd_kernel<17>,
                                  cudaFuncAttributeMaxDynamicSharedMemorySize,
                                  shared_mem) != cudaSuccess) {
             AT_ERROR("Failed to set maximum shared memory size (requested ", shared_mem,
@@ -2624,7 +2632,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
             last_ids.data_ptr<int32_t>(), median_depths.data_ptr<float>());
         break;
     case 32:
-        if (cudaFuncSetAttribute(rasterize_to_points_fwd_kernel<32>,
+        if (cudaFuncSetAttribute((const void *)rasterize_to_points_fwd_kernel<32>,
                                  cudaFuncAttributeMaxDynamicSharedMemorySize,
                                  shared_mem) != cudaSuccess) {
             AT_ERROR("Failed to set maximum shared memory size (requested ", shared_mem,
@@ -2652,7 +2660,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
             last_ids.data_ptr<int32_t>(), median_depths.data_ptr<float>());
         break;
     case 33:
-        if (cudaFuncSetAttribute(rasterize_to_points_fwd_kernel<33>,
+        if (cudaFuncSetAttribute((const void *)rasterize_to_points_fwd_kernel<33>,
                                  cudaFuncAttributeMaxDynamicSharedMemorySize,
                                  shared_mem) != cudaSuccess) {
             AT_ERROR("Failed to set maximum shared memory size (requested ", shared_mem,
@@ -2680,7 +2688,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
             last_ids.data_ptr<int32_t>(), median_depths.data_ptr<float>());
         break;
     case 64:
-        if (cudaFuncSetAttribute(rasterize_to_points_fwd_kernel<64>,
+        if (cudaFuncSetAttribute((const void *)rasterize_to_points_fwd_kernel<64>,
                                  cudaFuncAttributeMaxDynamicSharedMemorySize,
                                  shared_mem) != cudaSuccess) {
             AT_ERROR("Failed to set maximum shared memory size (requested ", shared_mem,
@@ -2708,7 +2716,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
             last_ids.data_ptr<int32_t>(), median_depths.data_ptr<float>());
         break;
     case 65:
-        if (cudaFuncSetAttribute(rasterize_to_points_fwd_kernel<65>,
+        if (cudaFuncSetAttribute((const void *)rasterize_to_points_fwd_kernel<65>,
                                  cudaFuncAttributeMaxDynamicSharedMemorySize,
                                  shared_mem) != cudaSuccess) {
             AT_ERROR("Failed to set maximum shared memory size (requested ", shared_mem,
@@ -2736,7 +2744,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
             last_ids.data_ptr<int32_t>(), median_depths.data_ptr<float>());
         break;
     case 128:
-        if (cudaFuncSetAttribute(rasterize_to_points_fwd_kernel<128>,
+        if (cudaFuncSetAttribute((const void *)rasterize_to_points_fwd_kernel<128>,
                                  cudaFuncAttributeMaxDynamicSharedMemorySize,
                                  shared_mem) != cudaSuccess) {
             AT_ERROR("Failed to set maximum shared memory size (requested ", shared_mem,
@@ -2764,7 +2772,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
             last_ids.data_ptr<int32_t>(), median_depths.data_ptr<float>());
         break;
     case 129:
-        if (cudaFuncSetAttribute(rasterize_to_points_fwd_kernel<129>,
+        if (cudaFuncSetAttribute((const void *)rasterize_to_points_fwd_kernel<129>,
                                  cudaFuncAttributeMaxDynamicSharedMemorySize,
                                  shared_mem) != cudaSuccess) {
             AT_ERROR("Failed to set maximum shared memory size (requested ", shared_mem,
@@ -2792,7 +2800,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
             last_ids.data_ptr<int32_t>(), median_depths.data_ptr<float>());
         break;
     case 256:
-        if (cudaFuncSetAttribute(rasterize_to_points_fwd_kernel<256>,
+        if (cudaFuncSetAttribute((const void *)rasterize_to_points_fwd_kernel<256>,
                                  cudaFuncAttributeMaxDynamicSharedMemorySize,
                                  shared_mem) != cudaSuccess) {
             AT_ERROR("Failed to set maximum shared memory size (requested ", shared_mem,
@@ -2820,7 +2828,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
             last_ids.data_ptr<int32_t>(), median_depths.data_ptr<float>());
         break;
     case 257:
-        if (cudaFuncSetAttribute(rasterize_to_points_fwd_kernel<257>,
+        if (cudaFuncSetAttribute((const void *)rasterize_to_points_fwd_kernel<257>,
                                  cudaFuncAttributeMaxDynamicSharedMemorySize,
                                  shared_mem) != cudaSuccess) {
             AT_ERROR("Failed to set maximum shared memory size (requested ", shared_mem,
@@ -2848,7 +2856,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
             last_ids.data_ptr<int32_t>(), median_depths.data_ptr<float>());
         break;
     case 512:
-        if (cudaFuncSetAttribute(rasterize_to_points_fwd_kernel<512>,
+        if (cudaFuncSetAttribute((const void *)rasterize_to_points_fwd_kernel<512>,
                                  cudaFuncAttributeMaxDynamicSharedMemorySize,
                                  shared_mem) != cudaSuccess) {
             AT_ERROR("Failed to set maximum shared memory size (requested ", shared_mem,
@@ -2876,7 +2884,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
             last_ids.data_ptr<int32_t>(), median_depths.data_ptr<float>());
         break;
     case 513:
-        if (cudaFuncSetAttribute(rasterize_to_points_fwd_kernel<513>,
+        if (cudaFuncSetAttribute((const void *)rasterize_to_points_fwd_kernel<513>,
                                  cudaFuncAttributeMaxDynamicSharedMemorySize,
                                  shared_mem) != cudaSuccess) {
             AT_ERROR("Failed to set maximum shared memory size (requested ", shared_mem,
@@ -3027,7 +3035,7 @@ __global__ void rasterize_to_pixels_bwd_kernel(
     // each thread loads one gaussian at a time before rasterizing
     const uint32_t tr = block.thread_rank();
     cg::thread_block_tile<32> warp = cg::tiled_partition<32>(block);
-    const int32_t warp_bin_final = cg::reduce(warp, bin_final, cg::greater<int>());
+    const int32_t warp_bin_final = warpReduceMax(bin_final, warp);
     for (uint32_t b = 0; b < num_batches; ++b) {
         // resync all threads before writing next batch of shared mem
         block.sync();
@@ -3263,7 +3271,7 @@ rasterize_to_pixels_bwd_tensor(
         at::cuda::CUDAStream stream = at::cuda::getCurrentCUDAStream();
         switch (COLOR_DIM) {
         case 1:
-            if (cudaFuncSetAttribute(rasterize_to_pixels_bwd_kernel<1>,
+            if (cudaFuncSetAttribute((const void *)rasterize_to_pixels_bwd_kernel<1>,
                                      cudaFuncAttributeMaxDynamicSharedMemorySize,
                                      shared_mem) != cudaSuccess) {
                 AT_ERROR("Failed to set maximum shared memory size (requested ",
@@ -3292,7 +3300,7 @@ rasterize_to_pixels_bwd_tensor(
                 v_opacities.data_ptr<float>(), (float2 *)v_pix_vels.data_ptr<float>());
             break;
         case 2:
-            if (cudaFuncSetAttribute(rasterize_to_pixels_bwd_kernel<2>,
+            if (cudaFuncSetAttribute((const void *)rasterize_to_pixels_bwd_kernel<2>,
                                      cudaFuncAttributeMaxDynamicSharedMemorySize,
                                      shared_mem) != cudaSuccess) {
                 AT_ERROR("Failed to set maximum shared memory size (requested ",
@@ -3321,7 +3329,7 @@ rasterize_to_pixels_bwd_tensor(
                 v_opacities.data_ptr<float>(), (float2 *)v_pix_vels.data_ptr<float>());
             break;
         case 3:
-            if (cudaFuncSetAttribute(rasterize_to_pixels_bwd_kernel<3>,
+            if (cudaFuncSetAttribute((const void *)rasterize_to_pixels_bwd_kernel<3>,
                                      cudaFuncAttributeMaxDynamicSharedMemorySize,
                                      shared_mem) != cudaSuccess) {
                 AT_ERROR("Failed to set maximum shared memory size (requested ",
@@ -3350,7 +3358,7 @@ rasterize_to_pixels_bwd_tensor(
                 v_opacities.data_ptr<float>(), (float2 *)v_pix_vels.data_ptr<float>());
             break;
         case 4:
-            if (cudaFuncSetAttribute(rasterize_to_pixels_bwd_kernel<4>,
+            if (cudaFuncSetAttribute((const void *)rasterize_to_pixels_bwd_kernel<4>,
                                      cudaFuncAttributeMaxDynamicSharedMemorySize,
                                      shared_mem) != cudaSuccess) {
                 AT_ERROR("Failed to set maximum shared memory size (requested ",
@@ -3379,7 +3387,7 @@ rasterize_to_pixels_bwd_tensor(
                 v_opacities.data_ptr<float>(), (float2 *)v_pix_vels.data_ptr<float>());
             break;
         case 5:
-            if (cudaFuncSetAttribute(rasterize_to_pixels_bwd_kernel<5>,
+            if (cudaFuncSetAttribute((const void *)rasterize_to_pixels_bwd_kernel<5>,
                                      cudaFuncAttributeMaxDynamicSharedMemorySize,
                                      shared_mem) != cudaSuccess) {
                 AT_ERROR("Failed to set maximum shared memory size (requested ",
@@ -3408,7 +3416,7 @@ rasterize_to_pixels_bwd_tensor(
                 v_opacities.data_ptr<float>(), (float2 *)v_pix_vels.data_ptr<float>());
             break;
         case 8:
-            if (cudaFuncSetAttribute(rasterize_to_pixels_bwd_kernel<8>,
+            if (cudaFuncSetAttribute((const void *)rasterize_to_pixels_bwd_kernel<8>,
                                      cudaFuncAttributeMaxDynamicSharedMemorySize,
                                      shared_mem) != cudaSuccess) {
                 AT_ERROR("Failed to set maximum shared memory size (requested ",
@@ -3437,7 +3445,7 @@ rasterize_to_pixels_bwd_tensor(
                 v_opacities.data_ptr<float>(), (float2 *)v_pix_vels.data_ptr<float>());
             break;
         case 9:
-            if (cudaFuncSetAttribute(rasterize_to_pixels_bwd_kernel<9>,
+            if (cudaFuncSetAttribute((const void *)rasterize_to_pixels_bwd_kernel<9>,
                                      cudaFuncAttributeMaxDynamicSharedMemorySize,
                                      shared_mem) != cudaSuccess) {
                 AT_ERROR("Failed to set maximum shared memory size (requested ",
@@ -3466,7 +3474,7 @@ rasterize_to_pixels_bwd_tensor(
                 v_opacities.data_ptr<float>(), (float2 *)v_pix_vels.data_ptr<float>());
             break;
         case 16:
-            if (cudaFuncSetAttribute(rasterize_to_pixels_bwd_kernel<16>,
+            if (cudaFuncSetAttribute((const void *)rasterize_to_pixels_bwd_kernel<16>,
                                      cudaFuncAttributeMaxDynamicSharedMemorySize,
                                      shared_mem) != cudaSuccess) {
                 AT_ERROR("Failed to set maximum shared memory size (requested ",
@@ -3495,7 +3503,7 @@ rasterize_to_pixels_bwd_tensor(
                 v_opacities.data_ptr<float>(), (float2 *)v_pix_vels.data_ptr<float>());
             break;
         case 17:
-            if (cudaFuncSetAttribute(rasterize_to_pixels_bwd_kernel<17>,
+            if (cudaFuncSetAttribute((const void *)rasterize_to_pixels_bwd_kernel<17>,
                                      cudaFuncAttributeMaxDynamicSharedMemorySize,
                                      shared_mem) != cudaSuccess) {
                 AT_ERROR("Failed to set maximum shared memory size (requested ",
@@ -3524,7 +3532,7 @@ rasterize_to_pixels_bwd_tensor(
                 v_opacities.data_ptr<float>(), (float2 *)v_pix_vels.data_ptr<float>());
             break;
         case 32:
-            if (cudaFuncSetAttribute(rasterize_to_pixels_bwd_kernel<32>,
+            if (cudaFuncSetAttribute((const void *)rasterize_to_pixels_bwd_kernel<32>,
                                      cudaFuncAttributeMaxDynamicSharedMemorySize,
                                      shared_mem) != cudaSuccess) {
                 AT_ERROR("Failed to set maximum shared memory size (requested ",
@@ -3553,7 +3561,7 @@ rasterize_to_pixels_bwd_tensor(
                 v_opacities.data_ptr<float>(), (float2 *)v_pix_vels.data_ptr<float>());
             break;
         case 33:
-            if (cudaFuncSetAttribute(rasterize_to_pixels_bwd_kernel<33>,
+            if (cudaFuncSetAttribute((const void *)rasterize_to_pixels_bwd_kernel<33>,
                                      cudaFuncAttributeMaxDynamicSharedMemorySize,
                                      shared_mem) != cudaSuccess) {
                 AT_ERROR("Failed to set maximum shared memory size (requested ",
@@ -3582,7 +3590,7 @@ rasterize_to_pixels_bwd_tensor(
                 v_opacities.data_ptr<float>(), (float2 *)v_pix_vels.data_ptr<float>());
             break;
         case 64:
-            if (cudaFuncSetAttribute(rasterize_to_pixels_bwd_kernel<64>,
+            if (cudaFuncSetAttribute((const void *)rasterize_to_pixels_bwd_kernel<64>,
                                      cudaFuncAttributeMaxDynamicSharedMemorySize,
                                      shared_mem) != cudaSuccess) {
                 AT_ERROR("Failed to set maximum shared memory size (requested ",
@@ -3611,7 +3619,7 @@ rasterize_to_pixels_bwd_tensor(
                 v_opacities.data_ptr<float>(), (float2 *)v_pix_vels.data_ptr<float>());
             break;
         case 65:
-            if (cudaFuncSetAttribute(rasterize_to_pixels_bwd_kernel<65>,
+            if (cudaFuncSetAttribute((const void *)rasterize_to_pixels_bwd_kernel<65>,
                                      cudaFuncAttributeMaxDynamicSharedMemorySize,
                                      shared_mem) != cudaSuccess) {
                 AT_ERROR("Failed to set maximum shared memory size (requested ",
@@ -3640,7 +3648,7 @@ rasterize_to_pixels_bwd_tensor(
                 v_opacities.data_ptr<float>(), (float2 *)v_pix_vels.data_ptr<float>());
             break;
         case 128:
-            if (cudaFuncSetAttribute(rasterize_to_pixels_bwd_kernel<128>,
+            if (cudaFuncSetAttribute((const void *)rasterize_to_pixels_bwd_kernel<128>,
                                      cudaFuncAttributeMaxDynamicSharedMemorySize,
                                      shared_mem) != cudaSuccess) {
                 AT_ERROR("Failed to set maximum shared memory size (requested ",
@@ -3670,7 +3678,7 @@ rasterize_to_pixels_bwd_tensor(
                     v_opacities.data_ptr<float>(), (float2 *)v_pix_vels.data_ptr<float>());
             break;
         case 129:
-            if (cudaFuncSetAttribute(rasterize_to_pixels_bwd_kernel<129>,
+            if (cudaFuncSetAttribute((const void *)rasterize_to_pixels_bwd_kernel<129>,
                                      cudaFuncAttributeMaxDynamicSharedMemorySize,
                                      shared_mem) != cudaSuccess) {
                 AT_ERROR("Failed to set maximum shared memory size (requested ",
@@ -3700,7 +3708,7 @@ rasterize_to_pixels_bwd_tensor(
                     v_opacities.data_ptr<float>(), (float2 *)v_pix_vels.data_ptr<float>());
             break;
         case 256:
-            if (cudaFuncSetAttribute(rasterize_to_pixels_bwd_kernel<256>,
+            if (cudaFuncSetAttribute((const void *)rasterize_to_pixels_bwd_kernel<256>,
                                      cudaFuncAttributeMaxDynamicSharedMemorySize,
                                      shared_mem) != cudaSuccess) {
                 AT_ERROR("Failed to set maximum shared memory size (requested ",
@@ -3730,7 +3738,7 @@ rasterize_to_pixels_bwd_tensor(
                     v_opacities.data_ptr<float>(), (float2 *)v_pix_vels.data_ptr<float>());
             break;
         case 257:
-            if (cudaFuncSetAttribute(rasterize_to_pixels_bwd_kernel<257>,
+            if (cudaFuncSetAttribute((const void *)rasterize_to_pixels_bwd_kernel<257>,
                                      cudaFuncAttributeMaxDynamicSharedMemorySize,
                                      shared_mem) != cudaSuccess) {
                 AT_ERROR("Failed to set maximum shared memory size (requested ",
@@ -3760,7 +3768,7 @@ rasterize_to_pixels_bwd_tensor(
                     v_opacities.data_ptr<float>(), (float2 *)v_pix_vels.data_ptr<float>());
             break;
         case 512:
-            if (cudaFuncSetAttribute(rasterize_to_pixels_bwd_kernel<512>,
+            if (cudaFuncSetAttribute((const void *)rasterize_to_pixels_bwd_kernel<512>,
                                      cudaFuncAttributeMaxDynamicSharedMemorySize,
                                      shared_mem) != cudaSuccess) {
                 AT_ERROR("Failed to set maximum shared memory size (requested ",
@@ -3790,7 +3798,7 @@ rasterize_to_pixels_bwd_tensor(
                     v_opacities.data_ptr<float>(), (float2 *)v_pix_vels.data_ptr<float>());
             break;
         case 513:
-            if (cudaFuncSetAttribute(rasterize_to_pixels_bwd_kernel<513>,
+            if (cudaFuncSetAttribute((const void *)rasterize_to_pixels_bwd_kernel<513>,
                                      cudaFuncAttributeMaxDynamicSharedMemorySize,
                                      shared_mem) != cudaSuccess) {
                 AT_ERROR("Failed to set maximum shared memory size (requested ",
@@ -3949,7 +3957,7 @@ __global__ void rasterize_to_points_bwd_kernel(
     // each thread loads one gaussian at a time before rasterizing
     const uint32_t tr = block.thread_rank();
     cg::thread_block_tile<32> warp = cg::tiled_partition<32>(block);
-    const int32_t warp_bin_final = cg::reduce(warp, bin_final, cg::greater<int>());
+    const int32_t warp_bin_final = warpReduceMax(bin_final, warp);
 
     for (uint32_t b = 0; b < num_batches; ++b) {
         // resync all threads before writing next batch of shared mem
@@ -4237,7 +4245,7 @@ rasterize_to_points_bwd_tensor(
         at::cuda::CUDAStream stream = at::cuda::getCurrentCUDAStream();
         switch (COLOR_DIM) {
         case 1:
-            if (cudaFuncSetAttribute(rasterize_to_points_bwd_kernel<1>,
+            if (cudaFuncSetAttribute((const void *)rasterize_to_points_bwd_kernel<1>,
                                      cudaFuncAttributeMaxDynamicSharedMemorySize,
                                      shared_mem) != cudaSuccess) {
                 AT_ERROR("Failed to set maximum shared memory size (requested ",
@@ -4274,7 +4282,7 @@ rasterize_to_points_bwd_tensor(
                 (float2 *)v_depth_compensations.data_ptr<float>());
             break;
         case 2:
-            if (cudaFuncSetAttribute(rasterize_to_points_bwd_kernel<2>,
+            if (cudaFuncSetAttribute((const void *)rasterize_to_points_bwd_kernel<2>,
                                      cudaFuncAttributeMaxDynamicSharedMemorySize,
                                      shared_mem) != cudaSuccess) {
                 AT_ERROR("Failed to set maximum shared memory size (requested ",
@@ -4311,7 +4319,7 @@ rasterize_to_points_bwd_tensor(
                 (float2 *)v_depth_compensations.data_ptr<float>());
             break;
         case 3:
-            if (cudaFuncSetAttribute(rasterize_to_points_bwd_kernel<3>,
+            if (cudaFuncSetAttribute((const void *)rasterize_to_points_bwd_kernel<3>,
                                      cudaFuncAttributeMaxDynamicSharedMemorySize,
                                      shared_mem) != cudaSuccess) {
                 AT_ERROR("Failed to set maximum shared memory size (requested ",
@@ -4348,7 +4356,7 @@ rasterize_to_points_bwd_tensor(
                 (float2 *)v_depth_compensations.data_ptr<float>());
             break;
         case 4:
-            if (cudaFuncSetAttribute(rasterize_to_points_bwd_kernel<4>,
+            if (cudaFuncSetAttribute((const void *)rasterize_to_points_bwd_kernel<4>,
                                      cudaFuncAttributeMaxDynamicSharedMemorySize,
                                      shared_mem) != cudaSuccess) {
                 AT_ERROR("Failed to set maximum shared memory size (requested ",
@@ -4385,7 +4393,7 @@ rasterize_to_points_bwd_tensor(
                 (float2 *)v_depth_compensations.data_ptr<float>());
             break;
         case 5:
-            if (cudaFuncSetAttribute(rasterize_to_points_bwd_kernel<5>,
+            if (cudaFuncSetAttribute((const void *)rasterize_to_points_bwd_kernel<5>,
                                      cudaFuncAttributeMaxDynamicSharedMemorySize,
                                      shared_mem) != cudaSuccess) {
                 AT_ERROR("Failed to set maximum shared memory size (requested ",
@@ -4422,7 +4430,7 @@ rasterize_to_points_bwd_tensor(
                 (float2 *)v_depth_compensations.data_ptr<float>());
             break;
         case 8:
-            if (cudaFuncSetAttribute(rasterize_to_points_bwd_kernel<8>,
+            if (cudaFuncSetAttribute((const void *)rasterize_to_points_bwd_kernel<8>,
                                      cudaFuncAttributeMaxDynamicSharedMemorySize,
                                      shared_mem) != cudaSuccess) {
                 AT_ERROR("Failed to set maximum shared memory size (requested ",
@@ -4459,7 +4467,7 @@ rasterize_to_points_bwd_tensor(
                 (float2 *)v_depth_compensations.data_ptr<float>());
             break;
         case 9:
-            if (cudaFuncSetAttribute(rasterize_to_points_bwd_kernel<9>,
+            if (cudaFuncSetAttribute((const void *)rasterize_to_points_bwd_kernel<9>,
                                      cudaFuncAttributeMaxDynamicSharedMemorySize,
                                      shared_mem) != cudaSuccess) {
                 AT_ERROR("Failed to set maximum shared memory size (requested ",
@@ -4496,7 +4504,7 @@ rasterize_to_points_bwd_tensor(
                 (float2 *)v_depth_compensations.data_ptr<float>());
             break;
         case 16:
-            if (cudaFuncSetAttribute(rasterize_to_points_bwd_kernel<16>,
+            if (cudaFuncSetAttribute((const void *)rasterize_to_points_bwd_kernel<16>,
                                      cudaFuncAttributeMaxDynamicSharedMemorySize,
                                      shared_mem) != cudaSuccess) {
                 AT_ERROR("Failed to set maximum shared memory size (requested ",
@@ -4533,7 +4541,7 @@ rasterize_to_points_bwd_tensor(
                 (float2 *)v_depth_compensations.data_ptr<float>());
             break;
         case 17:
-            if (cudaFuncSetAttribute(rasterize_to_points_bwd_kernel<17>,
+            if (cudaFuncSetAttribute((const void *)rasterize_to_points_bwd_kernel<17>,
                                      cudaFuncAttributeMaxDynamicSharedMemorySize,
                                      shared_mem) != cudaSuccess) {
                 AT_ERROR("Failed to set maximum shared memory size (requested ",
@@ -4570,7 +4578,7 @@ rasterize_to_points_bwd_tensor(
                 (float2 *)v_depth_compensations.data_ptr<float>());
             break;
         case 32:
-            if (cudaFuncSetAttribute(rasterize_to_points_bwd_kernel<32>,
+            if (cudaFuncSetAttribute((const void *)rasterize_to_points_bwd_kernel<32>,
                                      cudaFuncAttributeMaxDynamicSharedMemorySize,
                                      shared_mem) != cudaSuccess) {
                 AT_ERROR("Failed to set maximum shared memory size (requested ",
@@ -4607,7 +4615,7 @@ rasterize_to_points_bwd_tensor(
                 (float2 *)v_depth_compensations.data_ptr<float>());
             break;
         case 33:
-            if (cudaFuncSetAttribute(rasterize_to_points_bwd_kernel<33>,
+            if (cudaFuncSetAttribute((const void *)rasterize_to_points_bwd_kernel<33>,
                                      cudaFuncAttributeMaxDynamicSharedMemorySize,
                                      shared_mem) != cudaSuccess) {
                 AT_ERROR("Failed to set maximum shared memory size (requested ",
@@ -4644,7 +4652,7 @@ rasterize_to_points_bwd_tensor(
                 (float2 *)v_depth_compensations.data_ptr<float>());
             break;
         case 64:
-            if (cudaFuncSetAttribute(rasterize_to_points_bwd_kernel<64>,
+            if (cudaFuncSetAttribute((const void *)rasterize_to_points_bwd_kernel<64>,
                                      cudaFuncAttributeMaxDynamicSharedMemorySize,
                                      shared_mem) != cudaSuccess) {
                 AT_ERROR("Failed to set maximum shared memory size (requested ",
@@ -4681,7 +4689,7 @@ rasterize_to_points_bwd_tensor(
                 (float2 *)v_depth_compensations.data_ptr<float>());
             break;
         case 65:
-            if (cudaFuncSetAttribute(rasterize_to_points_bwd_kernel<65>,
+            if (cudaFuncSetAttribute((const void *)rasterize_to_points_bwd_kernel<65>,
                                      cudaFuncAttributeMaxDynamicSharedMemorySize,
                                      shared_mem) != cudaSuccess) {
                 AT_ERROR("Failed to set maximum shared memory size (requested ",
@@ -4718,7 +4726,7 @@ rasterize_to_points_bwd_tensor(
                 (float2 *)v_depth_compensations.data_ptr<float>());
             break;
         case 128:
-            if (cudaFuncSetAttribute(rasterize_to_points_bwd_kernel<128>,
+            if (cudaFuncSetAttribute((const void *)rasterize_to_points_bwd_kernel<128>,
                                      cudaFuncAttributeMaxDynamicSharedMemorySize,
                                      shared_mem) != cudaSuccess) {
                 AT_ERROR("Failed to set maximum shared memory size (requested ",
@@ -4756,7 +4764,7 @@ rasterize_to_points_bwd_tensor(
                     (float2 *)v_depth_compensations.data_ptr<float>());
             break;
         case 129:
-            if (cudaFuncSetAttribute(rasterize_to_points_bwd_kernel<129>,
+            if (cudaFuncSetAttribute((const void *)rasterize_to_points_bwd_kernel<129>,
                                      cudaFuncAttributeMaxDynamicSharedMemorySize,
                                      shared_mem) != cudaSuccess) {
                 AT_ERROR("Failed to set maximum shared memory size (requested ",
@@ -4794,7 +4802,7 @@ rasterize_to_points_bwd_tensor(
                     (float2 *)v_depth_compensations.data_ptr<float>());
             break;
         case 256:
-            if (cudaFuncSetAttribute(rasterize_to_points_bwd_kernel<256>,
+            if (cudaFuncSetAttribute((const void *)rasterize_to_points_bwd_kernel<256>,
                                      cudaFuncAttributeMaxDynamicSharedMemorySize,
                                      shared_mem) != cudaSuccess) {
                 AT_ERROR("Failed to set maximum shared memory size (requested ",
@@ -4832,7 +4840,7 @@ rasterize_to_points_bwd_tensor(
                     (float2 *)v_depth_compensations.data_ptr<float>());
             break;
         case 257:
-            if (cudaFuncSetAttribute(rasterize_to_points_bwd_kernel<257>,
+            if (cudaFuncSetAttribute((const void *)rasterize_to_points_bwd_kernel<257>,
                                      cudaFuncAttributeMaxDynamicSharedMemorySize,
                                      shared_mem) != cudaSuccess) {
                 AT_ERROR("Failed to set maximum shared memory size (requested ",
@@ -4870,7 +4878,7 @@ rasterize_to_points_bwd_tensor(
                     (float2 *)v_depth_compensations.data_ptr<float>());
             break;
         case 512:
-            if (cudaFuncSetAttribute(rasterize_to_points_bwd_kernel<512>,
+            if (cudaFuncSetAttribute((const void *)rasterize_to_points_bwd_kernel<512>,
                                      cudaFuncAttributeMaxDynamicSharedMemorySize,
                                      shared_mem) != cudaSuccess) {
                 AT_ERROR("Failed to set maximum shared memory size (requested ",
@@ -4908,7 +4916,7 @@ rasterize_to_points_bwd_tensor(
                     (float2 *)v_depth_compensations.data_ptr<float>());
             break;
         case 513:
-            if (cudaFuncSetAttribute(rasterize_to_points_bwd_kernel<513>,
+            if (cudaFuncSetAttribute((const void *)rasterize_to_points_bwd_kernel<513>,
                                      cudaFuncAttributeMaxDynamicSharedMemorySize,
                                      shared_mem) != cudaSuccess) {
                 AT_ERROR("Failed to set maximum shared memory size (requested ",

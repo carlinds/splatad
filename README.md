@@ -44,6 +44,8 @@ While the code contians all components needed to efficiently render camera and l
 # Installation
 Our code introduce no additional dependencies. We thus refer to the original documentation from gsplat for both [installation](https://github.com/nerfstudio-project/gsplat#installation) and [development setup](https://github.com/nerfstudio-project/gsplat/blob/main/docs/DEV.md).
 
+Both the camera and lidar rendering paths also build and run on AMD GPUs via ROCm. Install a ROCm build of PyTorch, then `pip install` as usual with `BUILD_CUDA=1` and `PYTORCH_ROCM_ARCH` set to your GPU's architecture (for example `gfx90a`, `gfx1100`, or `gfx1201`); the CUDA sources are hipified automatically at build time. The kernels are validated against the project's pure-PyTorch reference on both wave64 (CDNA) and wave32 (RDNA) hardware.
+
 # Usage
 See [`rasterization`](gsplat/rendering.py#L22) and [`lidar_rasterization`]((gsplat/rendering.py#L443)) for entry points to camera and lidar rasterization.
 Additionally, we provide example notebooks under [examples](examples) that demonstrate lidar rendering and rolling shutter compensation.

@@ -4,12 +4,20 @@
 #include "third_party/glm/glm/gtc/type_ptr.hpp"
 #include "utils.cuh"
 #include <cooperative_groups.h>
+#if !defined(USE_ROCM)
 #include <cooperative_groups/reduce.h>
+#endif
 #include <cub/cub.cuh>
 #include <cuda.h>
 #include <cuda_runtime.h>
 
 namespace cg = cooperative_groups;
+
+#if defined(USE_ROCM)
+// hipify rewrites <cub/cub.cuh> -> <hipcub/hipcub.hpp> but leaves the cub::
+// namespace unrenamed, so cub::BlockReduce / cub::BlockScan would be undeclared.
+namespace cub = hipcub;
+#endif
 
 /****************************************************************************
  * Quat-Scale to Covariance and Precision
@@ -482,7 +490,7 @@ world_to_cam_bwd_kernel(const uint32_t C, const uint32_t N,
     // #if __CUDA_ARCH__ >= 700
     // write out results with warp-level reduction
     auto warp = cg::tiled_partition<32>(cg::this_thread_block());
-    auto warp_group_g = cg::labeled_partition(warp, gid);
+    auto warp_group_g = LABELED_PARTITION(warp, gid);
     if (v_means != nullptr) {
         warpSum(v_mean, warp_group_g);
         if (warp_group_g.thread_rank() == 0) {
@@ -507,7 +515,7 @@ world_to_cam_bwd_kernel(const uint32_t C, const uint32_t N,
         }
     }
     if (v_viewmats != nullptr) {
-        auto warp_group_c = cg::labeled_partition(warp, cid);
+        auto warp_group_c = LABELED_PARTITION(warp, cid);
         warpSum(v_R, warp_group_c);
         warpSum(v_t, warp_group_c);
         if (warp_group_c.thread_rank() == 0) {
@@ -902,7 +910,7 @@ __global__ void fully_fused_projection_bwd_kernel(
     // #if __CUDA_ARCH__ >= 700
     // write out results with warp-level reduction
     auto warp = cg::tiled_partition<32>(cg::this_thread_block());
-    auto warp_group_g = cg::labeled_partition(warp, gid);
+    auto warp_group_g = LABELED_PARTITION(warp, gid);
     if (v_means != nullptr) {
         warpSum(v_mean, warp_group_g);
         if (warp_group_g.thread_rank() == 0) {
@@ -946,7 +954,7 @@ __global__ void fully_fused_projection_bwd_kernel(
         }
     }
     if (v_viewmats != nullptr) {
-        auto warp_group_c = cg::labeled_partition(warp, cid);
+        auto warp_group_c = LABELED_PARTITION(warp, cid);
         warpSum(v_R, warp_group_c);
         warpSum(v_t, warp_group_c);
         if (warp_group_c.thread_rank() == 0) {
@@ -1652,7 +1660,7 @@ __global__ void fully_fused_projection_packed_bwd_kernel(
         // write out results with dense layout
         // #if __CUDA_ARCH__ >= 700
         // write out results with warp-level reduction
-        auto warp_group_g = cg::labeled_partition(warp, gid);
+        auto warp_group_g = LABELED_PARTITION(warp, gid);
         if (v_means != nullptr) {
             warpSum(v_mean, warp_group_g);
             if (warp_group_g.thread_rank() == 0) {
@@ -1698,7 +1706,7 @@ __global__ void fully_fused_projection_packed_bwd_kernel(
     }
     // v_viewmats is always in dense layout
     if (v_viewmats != nullptr) {
-        auto warp_group_c = cg::labeled_partition(warp, cid);
+        auto warp_group_c = LABELED_PARTITION(warp, cid);
         warpSum(v_R, warp_group_c);
         warpSum(v_t, warp_group_c);
         if (warp_group_c.thread_rank() == 0) {
@@ -2567,7 +2575,7 @@ __global__ void fully_fused_lidar_projection_bwd_kernel(
     // #if __CUDA_ARCH__ >= 700
     // write out results with warp-level reduction
     auto warp = cg::tiled_partition<32>(cg::this_thread_block());
-    auto warp_group_g = cg::labeled_partition(warp, gid);
+    auto warp_group_g = LABELED_PARTITION(warp, gid);
     if (v_means != nullptr) {
         warpSum(v_mean, warp_group_g);
         if (warp_group_g.thread_rank() == 0) {
@@ -2611,7 +2619,7 @@ __global__ void fully_fused_lidar_projection_bwd_kernel(
         }
     }
     if (v_viewmats != nullptr) {
-        auto warp_group_c = cg::labeled_partition(warp, cid);
+        auto warp_group_c = LABELED_PARTITION(warp, cid);
         warpSum(v_R, warp_group_c);
         warpSum(v_t, warp_group_c);
         if (warp_group_c.thread_rank() == 0) {

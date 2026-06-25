@@ -2,6 +2,7 @@ import glob
 import os
 import os.path as osp
 import platform
+import shutil
 import sys
 
 from setuptools import find_packages, setup
@@ -16,10 +17,56 @@ WITH_SYMBOLS = os.getenv("WITH_SYMBOLS", "0") == "1"
 LINE_INFO = os.getenv("LINE_INFO", "0") == "1"
 
 
+def _patch_hipify_ignore_glm():
+    """Keep the bundled third_party/glm out of torch's hipify on ROCm.
+
+    torch's hipify (via CUDAExtension) walks every .hpp under the build dir and
+    the extension include dirs into its file set, then content-rewrites any GLM
+    header a source pulls in -- which drops GLM's .inl files (hipify only copies
+    .hpp/.h) and mangles GLM's __CUDACC__/__HIP__ compiler detection, breaking
+    the build. GLM 1.0.x already detects __HIP__ and compiles verbatim under the
+    -x hip pass, so the fix is simply to leave it untouched: add the glm dir to
+    hipify's ``ignores`` and drop it from ``header_include_dirs``. The source
+    keeps including <glm/...> via -I, resolved against the pristine bundled tree.
+    """
+    import torch
+
+    if not torch.version.hip:
+        return
+    from torch.utils.hipify import hipify_python
+
+    glm_dir = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "gsplat", "cuda", "csrc", "third_party", "glm",
+    )
+    glm_patterns = [os.path.join(glm_dir, "*"), glm_dir + "*"]
+    orig_hipify = hipify_python.hipify
+
+    def hipify_no_glm(*args, **kwargs):
+        kwargs["ignores"] = list(kwargs.get("ignores", ())) + glm_patterns
+        kwargs["header_include_dirs"] = [
+            d for d in kwargs.get("header_include_dirs", [])
+            if os.path.abspath(d) != os.path.abspath(glm_dir)
+        ]
+        return orig_hipify(*args, **kwargs)
+
+    hipify_python.hipify = hipify_no_glm
+
+
+if BUILD_CUDA:
+    _patch_hipify_ignore_glm()
+
+
 def get_ext():
+    import torch
     from torch.utils.cpp_extension import BuildExtension
 
-    return BuildExtension.with_options(no_python_abi_suffix=True, use_ninja=False)
+    # On Windows+ROCm, the non-ninja distutils builder cannot handle .hip files
+    # (torch hipify renames .cu -> .hip) and does not forward __HIP_PLATFORM_AMD__
+    # to MSVC for .cpp files; ninja handles both. Force ninja for that case only,
+    # leaving the CUDA build's default (use_ninja=False) untouched.
+    use_ninja = sys.platform == "win32" and bool(torch.version.hip)
+    return BuildExtension.with_options(no_python_abi_suffix=True, use_ninja=use_ninja)
 
 
 def get_extensions():
@@ -28,10 +75,30 @@ def get_extensions():
     from torch.utils.cpp_extension import CUDAExtension
 
     extensions_dir = osp.join("gsplat", "cuda", "csrc")
+    # On Windows with ninja, the build runs from a temp directory so relative
+    # include paths don't resolve. Use absolute path for the extension dir.
+    abs_extensions_dir = osp.abspath(extensions_dir)
     sources = glob.glob(osp.join(extensions_dir, "*.cu")) + glob.glob(
         osp.join(extensions_dir, "*.cpp")
     )
-    sources = [path for path in sources if "hip" not in path]
+    sources = [path for path in sources if "hip" not in path and "_winhip" not in path]
+
+    if sys.platform == "win32" and torch.version.hip:
+        # On Windows+ROCm, compiling .cpp files with MSVC cl.exe (the torch default
+        # for .cpp) fails to link: inherited constructors in c10-dllexport classes
+        # (e.g. c10::ValueError) are instantiated in the TU but not exported from
+        # c10.dll, causing LNK2001. amdclang (hipcc), used for .cu/.hip, handles
+        # this correctly. Route each .cpp through hipcc by creating a same-dir
+        # _winhip.cu shim (a copy) so relative #includes resolve.
+        shim_sources = []
+        for s in sources:
+            if s.endswith(".cpp"):
+                shim = s[:-4] + "_winhip.cu"
+                shutil.copyfile(s, shim)
+                shim_sources.append(shim)
+            else:
+                shim_sources.append(s)
+        sources = shim_sources
 
     undef_macros = []
     define_macros = []
@@ -42,7 +109,7 @@ def get_extensions():
     extra_compile_args = {"cxx": ["-O3"]}
     if not os.name == "nt":  # Not on Windows:
         extra_compile_args["cxx"] += ["-Wno-sign-compare"]
-    extra_link_args = [] if WITH_SYMBOLS else ["-s"]
+    extra_link_args = [] if (WITH_SYMBOLS or sys.platform == "win32") else ["-s"]
 
     info = parallel_info()
     if (
@@ -65,7 +132,7 @@ def get_extensions():
 
     nvcc_flags = os.getenv("NVCC_FLAGS", "")
     nvcc_flags = [] if nvcc_flags == "" else nvcc_flags.split(" ")
-    nvcc_flags += ["-O3", "--use_fast_math"]
+    nvcc_flags += ["-O3"]
     if LINE_INFO:
         nvcc_flags += ["-lineinfo"]
     if torch.version.hip:
@@ -73,8 +140,19 @@ def get_extensions():
         # Define here to support older PyTorch versions as well:
         define_macros += [("USE_ROCM", None)]
         undef_macros += ["__HIP_NO_HALF_CONVERSIONS__"]
+        # GLM's operator[] bounds checks expand to assert() -> __assert_fail, a
+        # __host__ function referenced from GLM's __host__ __device__ accessors.
+        # nvcc tolerates this (it supplies a device assert); ROCm clang rejects it.
+        # NDEBUG makes the debug-only bounds asserts no-ops (the indices here are
+        # compile-time constants, always in range) -- the standard release define.
+        nvcc_flags += ["-DNDEBUG"]
+        # ROCm clang's fast-math is more aggressive than CUDA's --use_fast_math
+        # and perturbs ill-conditioned projection/covariance gradients past the
+        # upstream test tolerances, so keep it OFF by default (opt-in FAST_MATH=1).
+        if os.getenv("FAST_MATH", "0") == "1":
+            nvcc_flags += ["-ffast-math"]
     else:
-        nvcc_flags += ["--expt-relaxed-constexpr"]
+        nvcc_flags += ["--use_fast_math", "--expt-relaxed-constexpr"]
     extra_compile_args["nvcc"] = nvcc_flags
     if sys.platform == "win32":
         extra_compile_args["nvcc"] += ["-DWIN32_LEAN_AND_MEAN"]
@@ -82,7 +160,7 @@ def get_extensions():
     extension = CUDAExtension(
         f"gsplat.csrc",
         sources,
-        include_dirs=[extensions_dir],
+        include_dirs=[abs_extensions_dir],
         define_macros=define_macros,
         undef_macros=undef_macros,
         extra_compile_args=extra_compile_args,

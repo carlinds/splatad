@@ -1,6 +1,21 @@
+#ifdef __HIP__
+// Make HIP's device memcpy overload (amd_device_functions.h) visible before GLM:
+// glm::make_vec/make_mat (type_ptr.inl) call bare memcpy from __host__ __device__
+// accessors, and GLM is included first, so without the HIP runtime in scope the
+// device pass binds the __host__ libc memcpy and clang errors. CUDA's nvcc is
+// lenient and needs no such hint. Use __HIP__ (defined by hipcc, not by the MSVC
+// host compiler on Windows) so MSVC does not try to include hip_runtime.h.
+#include <hip/hip_runtime.h>
+#endif
 #include "third_party/glm/glm/glm.hpp"
 #include "third_party/glm/glm/gtc/type_ptr.hpp"
+#if defined(__HIP__) || defined(__CUDACC__)
+// c10/cuda/CUDAGuard.h pulls in cuda/hip runtime headers that require the GPU
+// compiler (__CUDACC__/__HIP__) to be active. On Windows, the MSVC host compiler
+// processes ext.cpp without these macros, so skip the include there; DEVICE_GUARD
+// (defined below) is only called from .cu/.hip files compiled by hipcc/nvcc.
 #include <c10/cuda/CUDAGuard.h>
+#endif
 #include <torch/extension.h>
 #include <tuple>
 

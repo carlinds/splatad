@@ -123,3 +123,7 @@ compile_commands.json
 
 data
 results
+# ROCm: torch-hipify mirror (generated at build time, never committed)
+gsplat/hip/
+# ROCm Windows: _winhip.cu shims generated at build time to route .cpp through hipcc
+*_winhip.cu
